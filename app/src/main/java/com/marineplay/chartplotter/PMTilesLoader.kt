@@ -87,7 +87,22 @@ object PMTilesLoader {
      * PMTiles를 MapLibre에 적용하는 함수
      */
     private fun applyPMTilesToMap(map: MapLibreMap, configs: List<PMTilesConfig>, files: List<File>) {
-        map.setStyle(Style.Builder().fromUri("https://demotiles.maplibre.org/style.json")) { style ->
+        val styleJson = """
+{
+  "version": 8,
+  "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  "sources": {},
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": { "background-color": "#FFFFFF" }
+    }
+  ]
+}
+""".trimIndent()
+
+        map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
             try {
                 // 각 PMTiles 파일을 소스로 추가
                 for (i in configs.indices) {
@@ -247,7 +262,21 @@ object PMTilesLoader {
      * 기본 스타일을 로드하는 함수
      */
     private fun loadDefaultStyle(map: MapLibreMap) {
-        map.setStyle(Style.Builder().fromUri("https://demotiles.maplibre.org/style.json")) {
+        val styleJson = """
+        {
+          "version": 8,
+          "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",  // ✅ 추가
+          "sources": {},
+          "layers": [
+            {
+              "id": "background",
+              "type": "background",
+              "paint": { "background-color": "#FFFFFF" }
+            }
+          ]
+        }
+        """.trimIndent()
+        map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
             Log.d("[PMTilesLoader]", "기본 스타일 로드 완료")
         }
     }
