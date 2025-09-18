@@ -1,9 +1,14 @@
 package com.marineplay.chartplotter
 
 import android.Manifest
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.KeyEvent
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -60,6 +65,14 @@ import org.maplibre.android.maps.Style
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.LifecycleEventObserver
 
+data class SavedPoint(
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
+    val color: Color,
+    val timestamp: Long
+)
+
 class MainActivity : ComponentActivity() {
     
     private var locationManager: LocationManager? = null
@@ -70,6 +83,7 @@ class MainActivity : ComponentActivity() {
     private var pointName by mutableStateOf("")
     private var selectedColor by mutableStateOf(Color.Red)
     private var currentLatLng: LatLng? = null
+    private lateinit var sharedPreferences: SharedPreferences
 
     // 위치 권한 요청 런처
     private val locationPermissionRequest = registerForActivityResult(
@@ -96,6 +110,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // SharedPreferences 초기화
+        sharedPreferences = getSharedPreferences("chart_plotter_points", Context.MODE_PRIVATE)
+        
+        // 저장된 포인트들 로드
+        val savedPoints = loadPointsFromLocal()
+        android.util.Log.d("[MainActivity]", "저장된 포인트 ${savedPoints.size}개 로드 완료")
 
         // MapLibre 초기화
         MapLibre.getInstance(this)
@@ -201,9 +222,77 @@ class MainActivity : ComponentActivity() {
     
     private fun registerPoint() {
         currentLatLng?.let { latLng ->
-            // TODO: 실제 포인트 등록 로직 구현
-            android.util.Log.d("[MainActivity]", "포인트 등록: $pointName, 좌표: $latLng, 색상: $selectedColor")
+            val point = SavedPoint(
+                name = pointName,
+                latitude = latLng.latitude,
+                longitude = latLng.longitude,
+                color = selectedColor,
+                timestamp = System.currentTimeMillis()
+            )
+            
+            savePointToLocal(point)
+            android.util.Log.d("[MainActivity]", "포인트 등록 완료: $pointName, 좌표: $latLng, 색상: $selectedColor")
             showDialog = false
+        }
+    }
+    
+    private fun savePointToLocal(point: SavedPoint) {
+        try {
+            val existingPoints = loadPointsFromLocal().toMutableList()
+            existingPoints.add(point)
+            
+            val jsonArray = JSONArray()
+            existingPoints.forEach { p ->
+                val jsonObject = JSONObject().apply {
+                    put("name", p.name)
+                    put("latitude", p.latitude)
+                    put("longitude", p.longitude)
+                    put("color", AndroidColor.argb(
+                        (p.color.alpha * 255).toInt(),
+                        (p.color.red * 255).toInt(),
+                        (p.color.green * 255).toInt(),
+                        (p.color.blue * 255).toInt()
+                    ))
+                    put("timestamp", p.timestamp)
+                }
+                jsonArray.put(jsonObject)
+            }
+            
+            sharedPreferences.edit()
+                .putString("saved_points", jsonArray.toString())
+                .apply()
+                
+            android.util.Log.d("[MainActivity]", "포인트 저장 완료: ${existingPoints.size}개")
+        } catch (e: Exception) {
+            android.util.Log.e("[MainActivity]", "포인트 저장 실패: ${e.message}")
+        }
+    }
+    
+    private fun loadPointsFromLocal(): List<SavedPoint> {
+        return try {
+            val jsonString = sharedPreferences.getString("saved_points", null)
+            if (jsonString != null) {
+                val jsonArray = JSONArray(jsonString)
+                val points = mutableListOf<SavedPoint>()
+                
+                for (i in 0 until jsonArray.length()) {
+                    val jsonObject = jsonArray.getJSONObject(i)
+                    val point = SavedPoint(
+                        name = jsonObject.getString("name"),
+                        latitude = jsonObject.getDouble("latitude"),
+                        longitude = jsonObject.getDouble("longitude"),
+                        color = Color(jsonObject.getInt("color")),
+                        timestamp = jsonObject.getLong("timestamp")
+                    )
+                    points.add(point)
+                }
+                points
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("[MainActivity]", "포인트 로드 실패: ${e.message}")
+            emptyList()
         }
     }
 
