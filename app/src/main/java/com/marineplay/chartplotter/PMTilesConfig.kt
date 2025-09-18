@@ -105,3 +105,4 @@ object PMTilesManager {
         return defaultColorMappings[sourceName] ?: emptyMap()
     }
 }
+

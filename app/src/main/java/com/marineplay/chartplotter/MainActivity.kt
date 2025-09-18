@@ -54,10 +54,12 @@ class MainActivity : ComponentActivity() {
             permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
                 // 정확한 위치 권한이 허용됨
                 locationManager?.startLocationUpdates()
+                locationManager?.startAutoTracking()
             }
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
                 // 대략적인 위치 권한이 허용됨
                 locationManager?.startLocationUpdates()
+                locationManager?.startAutoTracking()
             }
             else -> {
                 // 위치 권한이 거부됨
@@ -80,7 +82,7 @@ class MainActivity : ComponentActivity() {
                     floatingActionButton = {
                         FloatingActionButton(
                             onClick = {
-                                locationManager?.centerMapOnCurrentLocation()
+                                locationManager?.startAutoTracking()
                             },
                             modifier = Modifier.size(56.dp)
                         ) {
@@ -105,6 +107,11 @@ class MainActivity : ComponentActivity() {
                                 locationManager?.addShipToMap(style)
                             }
                             
+                            // 지도 터치/드래그 감지하여 자동 추적 중지
+                            map.addOnCameraMoveListener {
+                                locationManager?.stopAutoTracking()
+                            }
+                            
                             // 위치 권한 확인 및 요청
                             if (ContextCompat.checkSelfPermission(
                                     this@MainActivity,
@@ -112,6 +119,8 @@ class MainActivity : ComponentActivity() {
                                 ) == PackageManager.PERMISSION_GRANTED
                             ) {
                                 locationManager?.startLocationUpdates()
+                                // 처음 시작 시 자동 추적 활성화
+                                locationManager?.startAutoTracking()
                             } else {
                                 locationPermissionRequest.launch(
                                     arrayOf(

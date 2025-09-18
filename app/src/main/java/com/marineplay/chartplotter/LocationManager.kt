@@ -46,6 +46,8 @@ class LocationManager(
     private var currentLocation: Location? = null
     private var shipSource: GeoJsonSource? = null
     private var shipLayer: SymbolLayer? = null
+    private var isAutoTracking = false // 자동 추적 상태
+    private var savedZoomLevel: Double? = null // 사용자가 설정한 줌 레벨 저장
 
     companion object {
         private const val MIN_DISTANCE_CHANGE_FOR_UPDATES = 10f // 10 m
@@ -136,6 +138,11 @@ class LocationManager(
         currentLocation = location
         Log.d("[LocationManager]", "위치 업데이트: ${location.latitude}, ${location.longitude}")
         updateShipLocation(location)
+        
+        // 자동 추적이 활성화된 경우에만 카메라를 따라가게 함
+        if (isAutoTracking) {
+            centerMapOnCurrentLocation()
+        }
     }
 
     /** 현재 위치 LatLng */
@@ -171,35 +178,65 @@ class LocationManager(
         shipSource?.setGeoJson(FeatureCollection.fromFeature(Feature.fromGeometry(point)))
     }
 
-    /** 지도 중앙을 현재 위치로 이동 */
+    /** 지도 중앙을 현재 위치로 이동 (줌 레벨 유지) */
     fun centerMapOnCurrentLocation() {
         currentLocation?.let { loc ->
             val latLng = LatLng(loc.latitude, loc.longitude)
-            val camPos = CameraPosition.Builder().target(latLng).zoom(15.0).build()
+            val zoom = savedZoomLevel ?: 15.0 // 저장된 줌 레벨이 있으면 사용, 없으면 기본값 15.0
+            val camPos = CameraPosition.Builder().target(latLng).zoom(zoom).build()
             map.animateCamera(CameraUpdateFactory.newCameraPosition(camPos), 1000)
-            Log.d("[LocationManager]", "지도가 현재 위치로 이동되었습니다: $latLng")
+            Log.d("[LocationManager]", "지도가 현재 위치로 이동되었습니다: $latLng (줌: $zoom)")
         } ?: Log.w("[LocationManager]", "현재 위치를 찾을 수 없습니다.")
     }
 
-    /** 간단한 선박 아이콘 비트맵 생성 */
+    /** 자동 추적 시작 (버튼 클릭 시 호출) */
+    fun startAutoTracking() {
+        isAutoTracking = true
+        centerMapOnCurrentLocation()
+        Log.d("[LocationManager]", "자동 추적이 시작되었습니다.")
+    }
+
+    /** 자동 추적 중지 (사용자가 지도를 터치/드래그할 때 호출) */
+    fun stopAutoTracking() {
+        isAutoTracking = false
+        // 현재 줌 레벨을 저장 (사용자가 설정한 줌 레벨 유지)
+        savedZoomLevel = map.cameraPosition.zoom
+        Log.d("[LocationManager]", "자동 추적이 중지되었습니다. 줌 레벨 저장: $savedZoomLevel")
+    }
+
+    /** 자동 추적 상태 확인 */
+    fun isAutoTrackingEnabled(): Boolean = isAutoTracking
+
+    /** 현재 위치 표시용 원형 마커 비트맵 생성 */
     fun createShipIconBitmap(): Bitmap {
         val size = 48
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        val paint = Paint().apply {
-            color = Color.BLUE
+        
+        // 흰색 테두리
+        val borderPaint = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 4f
+            isAntiAlias = true
+        }
+        
+        // 빨간색 채우기
+        val fillPaint = Paint().apply {
+            color = Color.RED
             style = Paint.Style.FILL
             isAntiAlias = true
         }
-        val path = android.graphics.Path().apply {
-            moveTo(size / 2f, 0f)
-            lineTo(0f, size.toFloat())
-            lineTo(size.toFloat(), size.toFloat())
-            close()
-        }
-        canvas.drawPath(path, paint)
-        paint.color = Color.WHITE
-        canvas.drawCircle(size / 2f, size / 2f, 4f, paint)
+        
+        val centerX = size / 2f
+        val centerY = size / 2f
+        val radius = size / 2f - 6f // 테두리를 위한 여백
+        
+        // 빨간색 원 그리기
+        canvas.drawCircle(centerX, centerY, radius, fillPaint)
+        // 흰색 테두리 그리기
+        canvas.drawCircle(centerX, centerY, radius, borderPaint)
+        
         return bitmap
     }
 }
