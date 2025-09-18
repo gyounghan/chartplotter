@@ -162,9 +162,14 @@ class MainActivity : ComponentActivity() {
                                 mapLibreMap = map
                                 locationManager = LocationManager(this@MainActivity, map)
 
-                                // PMTiles 로드 후 선박 아이콘 추가를 위해 스타일 로드 완료를 기다림
+                                // PMTiles 로드 후 선박 아이콘과 포인트 마커 추가를 위해 스타일 로드 완료를 기다림
                                 map.getStyle { style ->
                                     locationManager?.addShipToMap(style)
+                                    locationManager?.addPointsToMap(style)
+                                    
+                                    // 저장된 포인트들을 지도에 표시
+                                    val savedPoints = loadPointsFromLocal()
+                                    locationManager?.updatePointsOnMap(savedPoints)
                                 }
 
                                 // 지도 터치/드래그 감지하여 자동 추적 중지
@@ -231,6 +236,11 @@ class MainActivity : ComponentActivity() {
             )
             
             savePointToLocal(point)
+            
+            // 새로 등록된 포인트를 지도에 즉시 표시
+            val allPoints = loadPointsFromLocal()
+            locationManager?.updatePointsOnMap(allPoints)
+            
             android.util.Log.d("[MainActivity]", "포인트 등록 완료: $pointName, 좌표: $latLng, 색상: $selectedColor")
             showDialog = false
         }

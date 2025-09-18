@@ -28,6 +28,7 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import androidx.compose.ui.graphics.Color as ComposeColor
 
 // ⚠️ 안드로이드 시스템 LocationManager를 별칭으로 import (현재 클래스명과 충돌 방지)
 import android.location.LocationManager as SysLocationManager
@@ -48,12 +49,18 @@ class LocationManager(
     private var shipLayer: SymbolLayer? = null
     private var isAutoTracking = false // 자동 추적 상태
     private var savedZoomLevel: Double? = null // 사용자가 설정한 줌 레벨 저장
+    
+    // 포인트 마커 관련
+    private var pointsSource: GeoJsonSource? = null
+    private var pointsLayer: SymbolLayer? = null
 
     companion object {
         private const val MIN_DISTANCE_CHANGE_FOR_UPDATES = 10f // 10 m
         private const val MIN_TIME_BETWEEN_UPDATES = 1000L      // 1 s
         private const val SHIP_SOURCE_ID = "ship-location"
         private const val SHIP_LAYER_ID = "ship-symbol"
+        private const val POINTS_SOURCE_ID = "saved-points"
+        private const val POINTS_LAYER_ID = "points-symbol"
     }
 
     /** 위치 권한 확인: FINE 또는 COARSE 둘 중 하나만 있어도 OK */
@@ -238,5 +245,100 @@ class LocationManager(
         canvas.drawCircle(centerX, centerY, radius, borderPaint)
         
         return bitmap
+    }
+    
+    /** 포인트 마커를 지도에 추가 */
+    fun addPointsToMap(style: Style) {
+        try {
+            // 포인트 마커 아이콘 추가
+            val pointBitmap = createPointIconBitmap(ComposeColor.Red)
+            style.addImage("point-icon", pointBitmap)
+            
+            // 포인트 소스와 레이어 추가
+            pointsSource = GeoJsonSource(POINTS_SOURCE_ID).also { style.addSource(it) }
+            
+            pointsLayer = SymbolLayer(POINTS_LAYER_ID, POINTS_SOURCE_ID).apply {
+                setProperties(
+                    PropertyFactory.iconImage("point-icon"),
+                    PropertyFactory.iconSize(1.0f),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconIgnorePlacement(true),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+                    PropertyFactory.textField(get("name")),
+                    PropertyFactory.textSize(12f),
+                    PropertyFactory.textColor(Color.WHITE),
+                    PropertyFactory.textHaloColor(Color.BLACK),
+                    PropertyFactory.textHaloWidth(2f),
+                    PropertyFactory.textOffset(arrayOf(0f, -2f)),
+                    PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM),
+                    PropertyFactory.textAllowOverlap(true)
+                )
+            }
+            style.addLayer(pointsLayer!!)
+            Log.d("[LocationManager]", "포인트 마커 레이어가 추가되었습니다.")
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "포인트 마커 추가 실패: ${e.message}")
+        }
+    }
+    
+    /** 포인트 마커 비트맵 생성 */
+    private fun createPointIconBitmap(color: ComposeColor): Bitmap {
+        val size = 32
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        
+        // 흰색 테두리
+        val borderPaint = Paint().apply {
+            this.color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            isAntiAlias = true
+        }
+        
+        // 색상 채우기
+        val fillPaint = Paint().apply {
+            this.color = Color.argb(
+                (color.alpha * 255).toInt(),
+                (color.red * 255).toInt(),
+                (color.green * 255).toInt(),
+                (color.blue * 255).toInt()
+            )
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        
+        val centerX = size / 2f
+        val centerY = size / 2f
+        val radius = size / 2f - 4f
+        
+        // 색상 원 그리기
+        canvas.drawCircle(centerX, centerY, radius, fillPaint)
+        // 흰색 테두리 그리기
+        canvas.drawCircle(centerX, centerY, radius, borderPaint)
+        
+        return bitmap
+    }
+    
+    /** 저장된 포인트들을 지도에 표시 */
+    fun updatePointsOnMap(points: List<SavedPoint>) {
+        try {
+            val features = points.map { point ->
+                val geometry = Point.fromLngLat(point.longitude, point.latitude)
+                Feature.fromGeometry(geometry).apply {
+                    addStringProperty("name", point.name)
+                    addNumberProperty("color", Color.argb(
+                        (point.color.alpha * 255).toInt(),
+                        (point.color.red * 255).toInt(),
+                        (point.color.green * 255).toInt(),
+                        (point.color.blue * 255).toInt()
+                    ))
+                }
+            }
+            
+            pointsSource?.setGeoJson(FeatureCollection.fromFeatures(features))
+            Log.d("[LocationManager]", "포인트 ${points.size}개가 지도에 표시되었습니다.")
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "포인트 업데이트 실패: ${e.message}")
+        }
     }
 }
