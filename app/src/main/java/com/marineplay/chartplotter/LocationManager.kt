@@ -273,8 +273,10 @@ class LocationManager(
                     PropertyFactory.textHaloWidth(2f),
                     PropertyFactory.textOffset(arrayOf(0f, -2f)),
                     PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM),
-                    PropertyFactory.textAllowOverlap(true)
+                    PropertyFactory.textAllowOverlap(true),
+                    PropertyFactory.visibility(Property.VISIBLE)
                 )
+                setMinZoom(16.0f) // 줌 레벨 8 이상에서만 표시
             }
             style.addLayer(pointsLayer!!)
             Log.d("[LocationManager]", "포인트 마커 레이어가 추가되었습니다.")
