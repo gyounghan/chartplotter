@@ -297,6 +297,82 @@ class MainActivity : ComponentActivity() {
                 }
                 return true
             }
+            KeyEvent.KEYCODE_BUTTON_6 -> {
+                // 화면 위로 이동
+                mapLibreMap?.let { map ->
+                    val currentPosition = map.cameraPosition
+                    currentPosition.target?.let { target ->
+                        val currentLat = target.latitude
+                        val currentLng = target.longitude
+                        val zoom = currentPosition.zoom
+                        
+                        // 위도 증가 (북쪽으로 이동)
+                        val newLat = currentLat + (0.01 / Math.pow(2.0, zoom - 8.0))
+                        val newPosition = org.maplibre.android.geometry.LatLng(newLat, currentLng)
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newLatLng(newPosition)
+                        map.animateCamera(cameraUpdate, 300)
+                        android.util.Log.d("[MainActivity]", "화면 위로 이동: $currentLat -> $newLat")
+                    }
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BUTTON_7 -> {
+                // 화면 아래로 이동
+                mapLibreMap?.let { map ->
+                    val currentPosition = map.cameraPosition
+                    currentPosition.target?.let { target ->
+                        val currentLat = target.latitude
+                        val currentLng = target.longitude
+                        val zoom = currentPosition.zoom
+                        
+                        // 위도 감소 (남쪽으로 이동)
+                        val newLat = currentLat - (0.01 / Math.pow(2.0, zoom - 8.0))
+                        val newPosition = org.maplibre.android.geometry.LatLng(newLat, currentLng)
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newLatLng(newPosition)
+                        map.animateCamera(cameraUpdate, 300)
+                        android.util.Log.d("[MainActivity]", "화면 아래로 이동: $currentLat -> $newLat")
+                    }
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BUTTON_8 -> {
+                // 화면 왼쪽으로 이동
+                mapLibreMap?.let { map ->
+                    val currentPosition = map.cameraPosition
+                    currentPosition.target?.let { target ->
+                        val currentLat = target.latitude
+                        val currentLng = target.longitude
+                        val zoom = currentPosition.zoom
+                        
+                        // 경도 감소 (서쪽으로 이동)
+                        val newLng = currentLng - (0.01 / Math.pow(2.0, zoom - 8.0))
+                        val newPosition = org.maplibre.android.geometry.LatLng(currentLat, newLng)
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newLatLng(newPosition)
+                        map.animateCamera(cameraUpdate, 300)
+                        android.util.Log.d("[MainActivity]", "화면 왼쪽으로 이동: $currentLng -> $newLng")
+                    }
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BUTTON_9 -> {
+                // 화면 오른쪽으로 이동
+                mapLibreMap?.let { map ->
+                    val currentPosition = map.cameraPosition
+                    currentPosition.target?.let { target ->
+                        val currentLat = target.latitude
+                        val currentLng = target.longitude
+                        val zoom = currentPosition.zoom
+                        
+                        // 경도 증가 (동쪽으로 이동)
+                        val newLng = currentLng + (0.01 / Math.pow(2.0, zoom - 8.0))
+                        val newPosition = org.maplibre.android.geometry.LatLng(currentLat, newLng)
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newLatLng(newPosition)
+                        map.animateCamera(cameraUpdate, 300)
+                        android.util.Log.d("[MainActivity]", "화면 오른쪽으로 이동: $currentLng -> $newLng")
+                    }
+                }
+                return true
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
