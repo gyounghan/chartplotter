@@ -84,6 +84,13 @@ class MainActivity : ComponentActivity() {
     private var selectedColor by mutableStateOf(Color.Red)
     private var currentLatLng: LatLng? = null
     private lateinit var sharedPreferences: SharedPreferences
+    
+    // 포인트 관리 다이얼로그 관련
+    private var showPointManageDialog by mutableStateOf(false)
+    private var selectedPoint: SavedPoint? = null
+    private var showEditDialog by mutableStateOf(false)
+    private var editPointName by mutableStateOf("")
+    private var editSelectedColor by mutableStateOf(Color.Red)
 
     // 위치 권한 요청 런처
     private val locationPermissionRequest = registerForActivityResult(
@@ -136,6 +143,32 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 
+                // 포인트 관리 다이얼로그 표시
+                if (showPointManageDialog && selectedPoint != null) {
+                    PointManageDialog(
+                        point = selectedPoint!!,
+                        onDelete = { deletePoint(selectedPoint!!) },
+                        onEdit = { 
+                            showPointManageDialog = false
+                            showEditDialog = true
+                        },
+                        onDismiss = { showPointManageDialog = false }
+                    )
+                }
+                
+                // 포인트 편집 다이얼로그 표시
+                if (showEditDialog && selectedPoint != null) {
+                    PointEditDialog(
+                        point = selectedPoint!!,
+                        pointName = editPointName,
+                        onPointNameChange = { editPointName = it },
+                        selectedColor = editSelectedColor,
+                        onColorChange = { editSelectedColor = it },
+                        onSave = { updatePoint(selectedPoint!!, editPointName, editSelectedColor) },
+                        onDismiss = { showEditDialog = false }
+                    )
+                }
+                
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     floatingActionButton = {
@@ -175,6 +208,27 @@ class MainActivity : ComponentActivity() {
                                 // 지도 터치/드래그 감지하여 자동 추적 중지
                                 map.addOnCameraMoveListener {
                                     locationManager?.stopAutoTracking()
+                                }
+                                
+                                // 지도 클릭 이벤트 처리 (포인트 마커 클릭 감지)
+                                map.addOnMapClickListener { latLng ->
+                                    val savedPoints = loadPointsFromLocal()
+                                    val pointClicked = locationManager?.handlePointClick(latLng, savedPoints) ?: false
+                                    if (pointClicked) {
+                                        // 포인트가 클릭되었으면 true 반환하여 기본 지도 클릭 이벤트 방지
+                                        true
+                                    } else {
+                                        // 포인트가 클릭되지 않았으면 기본 지도 클릭 이벤트 허용
+                                        false
+                                    }
+                                }
+                                
+                                // 포인트 클릭 리스너 설정
+                                locationManager?.setOnPointClickListener { point ->
+                                    selectedPoint = point
+                                    editPointName = point.name
+                                    editSelectedColor = point.color
+                                    showPointManageDialog = true
                                 }
 
                                 // 위치 권한 확인 및 요청
@@ -303,6 +357,89 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             android.util.Log.e("[MainActivity]", "포인트 로드 실패: ${e.message}")
             emptyList()
+        }
+    }
+    
+    /** 포인트 삭제 */
+    private fun deletePoint(point: SavedPoint) {
+        try {
+            val existingPoints = loadPointsFromLocal().toMutableList()
+            existingPoints.removeAll { it.timestamp == point.timestamp }
+            
+            val jsonArray = JSONArray()
+            existingPoints.forEach { p ->
+                val jsonObject = JSONObject().apply {
+                    put("name", p.name)
+                    put("latitude", p.latitude)
+                    put("longitude", p.longitude)
+                    put("color", AndroidColor.argb(
+                        (p.color.alpha * 255).toInt(),
+                        (p.color.red * 255).toInt(),
+                        (p.color.green * 255).toInt(),
+                        (p.color.blue * 255).toInt()
+                    ))
+                    put("timestamp", p.timestamp)
+                }
+                jsonArray.put(jsonObject)
+            }
+            
+            sharedPreferences.edit()
+                .putString("saved_points", jsonArray.toString())
+                .apply()
+            
+            // 지도에서 포인트 제거
+            locationManager?.updatePointsOnMap(existingPoints)
+            
+            android.util.Log.d("[MainActivity]", "포인트 삭제 완료: ${point.name}")
+            showPointManageDialog = false
+        } catch (e: Exception) {
+            android.util.Log.e("[MainActivity]", "포인트 삭제 실패: ${e.message}")
+        }
+    }
+    
+    /** 포인트 업데이트 */
+    private fun updatePoint(originalPoint: SavedPoint, newName: String, newColor: Color) {
+        try {
+            val existingPoints = loadPointsFromLocal().toMutableList()
+            val pointIndex = existingPoints.indexOfFirst { it.timestamp == originalPoint.timestamp }
+            
+            if (pointIndex != -1) {
+                val updatedPoint = originalPoint.copy(
+                    name = newName,
+                    color = newColor
+                )
+                existingPoints[pointIndex] = updatedPoint
+                
+                val jsonArray = JSONArray()
+                existingPoints.forEach { p ->
+                    val jsonObject = JSONObject().apply {
+                        put("name", p.name)
+                        put("latitude", p.latitude)
+                        put("longitude", p.longitude)
+                        put("color", AndroidColor.argb(
+                            (p.color.alpha * 255).toInt(),
+                            (p.color.red * 255).toInt(),
+                            (p.color.green * 255).toInt(),
+                            (p.color.blue * 255).toInt()
+                        ))
+                        put("timestamp", p.timestamp)
+                    }
+                    jsonArray.put(jsonObject)
+                }
+                
+                sharedPreferences.edit()
+                    .putString("saved_points", jsonArray.toString())
+                    .apply()
+                
+                // 지도에서 포인트 업데이트
+                locationManager?.updatePointsOnMap(existingPoints)
+                
+                android.util.Log.d("[MainActivity]", "포인트 업데이트 완료: $newName")
+            }
+            
+            showEditDialog = false
+        } catch (e: Exception) {
+            android.util.Log.e("[MainActivity]", "포인트 업데이트 실패: ${e.message}")
         }
     }
 
@@ -493,6 +630,169 @@ fun PointRegistrationDialog(
                 enabled = pointName.isNotBlank()
             ) {
                 Text("등록")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소")
+            }
+        }
+    )
+}
+
+@Composable
+fun PointManageDialog(
+    point: SavedPoint,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("포인트 관리") },
+        text = { 
+            Column {
+                Text("포인트명: ${point.name}", fontSize = 16.sp)
+                Text("위도: ${String.format("%.6f", point.latitude)}", fontSize = 14.sp)
+                Text("경도: ${String.format("%.6f", point.longitude)}", fontSize = 14.sp)
+                Text("등록일: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(point.timestamp))}", fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onEdit,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color.Blue
+                )
+            ) {
+                Text("변경")
+            }
+        },
+        dismissButton = {
+            Row {
+                Button(
+                    onClick = onDelete,
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = androidx.compose.ui.graphics.Color.Red
+                    )
+                ) {
+                    Text("삭제")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(onClick = onDismiss) {
+                    Text("취소")
+                }
+            }
+        }
+    )
+}
+
+@Composable
+fun PointEditDialog(
+    point: SavedPoint,
+    pointName: String,
+    onPointNameChange: (String) -> Unit,
+    selectedColor: Color,
+    onColorChange: (Color) -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = listOf(
+        Color.Red to "빨간색",
+        Color.Blue to "파란색", 
+        Color.Green to "초록색",
+        Color.Yellow to "노란색",
+        Color.Magenta to "자홍색",
+        Color.Cyan to "청록색"
+    )
+    
+    var showColorMenu by remember { mutableStateOf(false) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("포인트 편집") },
+        text = { 
+            Column {
+                // 좌표 표시
+                Text("좌표:", fontSize = 14.sp)
+                Text(
+                    text = "위도: ${String.format("%.6f", point.latitude)}\n경도: ${String.format("%.6f", point.longitude)}",
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    fontSize = 12.sp
+                )
+                
+                // 포인트명 입력
+                TextField(
+                    value = pointName,
+                    onValueChange = onPointNameChange,
+                    label = { Text("포인트명") },
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                
+                // 색상 선택
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Text("색상:", modifier = Modifier.padding(end = 8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(selectedColor, CircleShape)
+                            .clickable { showColorMenu = true }
+                            .padding(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(24.dp)
+                                .background(selectedColor, CircleShape)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = colors.find { it.first == selectedColor }?.second ?: "빨간색",
+                        fontSize = 12.sp
+                    )
+                }
+                
+                // 색상 드롭다운 메뉴
+                DropdownMenu(
+                    expanded = showColorMenu,
+                    onDismissRequest = { showColorMenu = false }
+                ) {
+                    colors.forEach { (color, name) ->
+                        DropdownMenuItem(
+                            text = { 
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .background(color, CircleShape)
+                                            .padding(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(16.dp)
+                                                .background(color, CircleShape)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(name)
+                                }
+                            },
+                            onClick = {
+                                onColorChange(color)
+                                showColorMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onSave,
+                enabled = pointName.isNotBlank()
+            ) {
+                Text("저장")
             }
         },
         dismissButton = {

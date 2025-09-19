@@ -20,6 +20,7 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.android.maps.MapLibreMap.OnMapClickListener
 import org.maplibre.android.style.expressions.Expression.*
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -53,6 +54,7 @@ class LocationManager(
     // 포인트 마커 관련
     private var pointsSource: GeoJsonSource? = null
     private var pointsLayer: SymbolLayer? = null
+    private var onPointClickListener: ((SavedPoint) -> Unit)? = null
 
     companion object {
         private const val MIN_DISTANCE_CHANGE_FOR_UPDATES = 10f // 10 m
@@ -332,6 +334,7 @@ class LocationManager(
                         (point.color.green * 255).toInt(),
                         (point.color.blue * 255).toInt()
                     ))
+                    addStringProperty("id", "${point.latitude}_${point.longitude}_${point.timestamp}")
                 }
             }
             
@@ -340,5 +343,40 @@ class LocationManager(
         } catch (e: Exception) {
             Log.e("[LocationManager]", "포인트 업데이트 실패: ${e.message}")
         }
+    }
+    
+    /** 포인트 클릭 리스너 설정 */
+    fun setOnPointClickListener(listener: (SavedPoint) -> Unit) {
+        onPointClickListener = listener
+    }
+    
+    /** 포인트 클릭 이벤트 처리 */
+    fun handlePointClick(latLng: LatLng, points: List<SavedPoint>): Boolean {
+        // 클릭된 위치와 가장 가까운 포인트 찾기 (10미터 이내)
+        val clickedPoint = points.find { point ->
+            val distance = calculateDistance(
+                latLng.latitude, latLng.longitude,
+                point.latitude, point.longitude
+            )
+            distance <= 10.0 // 10미터 이내
+        }
+        
+        clickedPoint?.let { point ->
+            onPointClickListener?.invoke(point)
+            return true
+        }
+        return false
+    }
+    
+    /** 두 좌표 간의 거리 계산 (미터) */
+    private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadius = 6371000.0 // 지구 반지름 (미터)
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return earthRadius * c
     }
 }
