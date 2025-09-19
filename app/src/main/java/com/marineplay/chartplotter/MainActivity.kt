@@ -275,6 +275,28 @@ class MainActivity : ComponentActivity() {
                 showDialog = true
                 return true
             }
+            KeyEvent.KEYCODE_BUTTON_4 -> {
+                // 줌 아웃
+                mapLibreMap?.let { map ->
+                    val currentZoom = map.cameraPosition.zoom
+                    val newZoom = (currentZoom - 1.0).coerceAtLeast(0.0)
+                    val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                    map.animateCamera(cameraUpdate, 300)
+                    android.util.Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BUTTON_5 -> {
+                // 줌 인
+                mapLibreMap?.let { map ->
+                    val currentZoom = map.cameraPosition.zoom
+                    val newZoom = (currentZoom + 1.0).coerceAtMost(20.0)
+                    val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                    map.animateCamera(cameraUpdate, 300)
+                    android.util.Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
+                }
+                return true
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
