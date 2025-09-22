@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +24,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -47,8 +49,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -642,6 +651,10 @@ fun PointRegistrationDialog(
     )
     
     var showColorMenu by remember { mutableStateOf(false) }
+    var focusState by remember { mutableStateOf("name") } // "name", "color", "register", "cancel"
+    val focusRequester = remember { FocusRequester() }
+    var isButtonPressed by remember { mutableStateOf(false) } // 버튼이 눌렸는지 추적
+    var selectedColorIndex by remember { mutableStateOf(0) } // 색상 메뉴에서 선택된 색상 인덱스
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -656,18 +669,31 @@ fun PointRegistrationDialog(
                     fontSize = 12.sp
                 )
                 
-                // 포인트명 입력
+                // 포인트명 입력 (포커스 표시)
                 TextField(
                     value = pointName,
                     onValueChange = onPointNameChange,
                     label = { Text("포인트명") },
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    modifier = Modifier
+                        .padding(vertical = 4.dp)
+                        .background(
+                            if (focusState == "name") Color.Yellow.copy(alpha = 0.3f) else Color.Transparent,
+                            androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                        )
+                        .padding(4.dp)
+                        .focusRequester(focusRequester)
                 )
                 
-                // 색상 선택
+                // 색상 선택 (포커스 표시)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    modifier = Modifier
+                        .padding(vertical = 4.dp)
+                        .background(
+                            if (focusState == "color") Color.Yellow.copy(alpha = 0.3f) else Color.Transparent,
+                            androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                        )
+                        .padding(4.dp)
                 ) {
                     Text("색상:", modifier = Modifier.padding(end = 8.dp))
                     Box(
@@ -692,9 +718,48 @@ fun PointRegistrationDialog(
                 // 색상 드롭다운 메뉴
                 DropdownMenu(
                     expanded = showColorMenu,
-                    onDismissRequest = { showColorMenu = false }
+                    onDismissRequest = { 
+                        // 버튼이 눌렸거나 포커스가 color에 있을 때는 메뉴를 닫지 않음
+                        if (!isButtonPressed && focusState != "color") {
+                            showColorMenu = false
+                        }
+                        isButtonPressed = false // 버튼 상태 리셋
+                    },
+                    modifier = Modifier
+                        .focusable()
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (e.nativeKeyEvent.keyCode) {
+                                193 /* BUTTON_6  */ -> {
+                                    // 색상 메뉴에서 이전 색상으로 이동
+                                    selectedColorIndex = if (selectedColorIndex > 0) selectedColorIndex - 1 else colors.size - 1
+                                    Log.d("[Dialog]", "색상 메뉴에서 이전 색상: ${colors[selectedColorIndex].second}")
+                                    true
+                                }
+                                194 /* BUTTON_7  */ -> {
+                                    // 색상 메뉴에서 다음 색상으로 이동
+                                    selectedColorIndex = (selectedColorIndex + 1) % colors.size
+                                    Log.d("[Dialog]", "색상 메뉴에서 다음 색상: ${colors[selectedColorIndex].second}")
+                                    true
+                                }
+                                197 /* BUTTON_10 */ -> {
+                                    // 현재 선택된 색상을 적용하고 메뉴 닫기
+                                    onColorChange(colors[selectedColorIndex].first)
+                                    showColorMenu = false
+                                    Log.d("[Dialog]", "색상 선택됨: ${colors[selectedColorIndex].second}")
+                                    true
+                                }
+                                198 /* BUTTON_11 */ -> {
+                                    // 색상 메뉴 닫기
+                                    showColorMenu = false
+                                    Log.d("[Dialog]", "색상 메뉴 닫기")
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
                 ) {
-                    colors.forEach { (color, name) ->
+                    colors.forEachIndexed { index, (color, name) ->
                         DropdownMenuItem(
                             text = { 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -710,7 +775,10 @@ fun PointRegistrationDialog(
                                         )
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text(name)
+                                    Text(
+                                        text = name,
+                                        color = if (index == selectedColorIndex) Color.Blue else Color.Unspecified
+                                    )
                                 }
                             },
                             onClick = {
@@ -725,16 +793,137 @@ fun PointRegistrationDialog(
         confirmButton = {
             Button(
                 onClick = onRegister,
-                enabled = pointName.isNotBlank()
+                enabled = pointName.isNotBlank(),
+                modifier = Modifier.background(
+                    if (focusState == "register") Color.Blue.copy(alpha = 0.3f) else Color.Transparent,
+                    androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                )
             ) {
                 Text("등록")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.background(
+                    if (focusState == "cancel") Color.Red.copy(alpha = 0.3f) else Color.Transparent,
+                    androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                )
+            ) {
                 Text("취소")
             }
-        }
+        },
+        // ⬇️ 여기서 193/194/195/196을 포커스 이동으로만 매핑
+        modifier = Modifier
+            .focusable()
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (e.nativeKeyEvent.keyCode) {
+                    193 /* BUTTON_6  */ -> {
+                        // 색상 메뉴가 열려있으면 색상 선택, 아니면 포커스 위로 이동
+                        if (showColorMenu) {
+                            // 색상 메뉴에서 이전 색상으로 이동
+                            selectedColorIndex = if (selectedColorIndex > 0) selectedColorIndex - 1 else colors.size - 1
+                            Log.d("[Dialog]", "색상 메뉴에서 이전 색상: ${colors[selectedColorIndex].second}")
+                        } else {
+                            // 포커스 위로 이동
+                            focusState = when (focusState) {
+                                "name" -> "name"
+                                "color" -> "name"
+                                "register" -> "color"
+                                "cancel" -> "register"
+                                else -> "name"
+                            }
+                            Log.d("[Dialog]", "위로 이동: $focusState")
+                        }
+                        true
+                    }
+                    194 /* BUTTON_7  */ -> {
+                        // 색상 메뉴가 열려있으면 색상 선택, 아니면 포커스 아래로 이동
+                        Log.d("[Dialog]", "194 입력: ${showColorMenu}")
+                        if (showColorMenu) {
+                            // 색상 메뉴에서 다음 색상으로 이동
+                            selectedColorIndex = (selectedColorIndex + 1) % colors.size
+                            Log.d("[Dialog]", "색상 메뉴에서 다음 색상: ${colors[selectedColorIndex].second}")
+                        } else {
+                            // 포커스 아래로 이동
+                            focusState = when (focusState) {
+                                "name" -> "color"
+                                "color" -> "register"
+                                "register" -> "cancel"
+                                "cancel" -> "cancel"
+                                else -> "name"
+                            }
+                            Log.d("[Dialog]", "아래로 이동: $focusState")
+                        }
+                        true
+                    }
+                    195 /* BUTTON_8  */ -> {
+                        // 포커스 왼쪽으로 이동
+                        if (focusState == "register") {
+                            focusState = "cancel"
+                        } else if (focusState == "cancel") {
+                            focusState = "register"
+                        }
+                        Log.d("[Dialog]", "좌로 이동: $focusState")
+                        true
+                    }
+                    196 /* BUTTON_9  */ -> {
+                        // 포커스 오른쪽으로 이동
+                        if (focusState == "register") {
+                            focusState = "cancel"
+                        } else if (focusState == "cancel") {
+                            focusState = "register"
+                        }
+                        Log.d("[Dialog]", "우로 이동: $focusState")
+                        true
+                    }
+                    197 /* BUTTON_10 */ -> {
+                        // 현재 포커스된 요소 선택/액션
+                        isButtonPressed = true // 버튼이 눌렸음을 표시
+                        if (showColorMenu) {
+                            // 색상 메뉴가 열려있으면 현재 선택된 색상을 적용
+                            onColorChange(colors[selectedColorIndex].first)
+                            showColorMenu = false
+                            Log.d("[Dialog]", "색상 선택됨: ${colors[selectedColorIndex].second}")
+                        } else {
+                            when (focusState) {
+                                "name" -> {
+                                    focusRequester.requestFocus()
+                                    Log.d("[Dialog]", "포인트명 입력 필드 선택됨")
+                                }
+                                "color" -> {
+                                    showColorMenu = true
+                                    selectedColorIndex = colors.indexOfFirst { it.first == selectedColor }.takeIf { it >= 0 } ?: 0
+                                    Log.d("[Dialog]", "색상 메뉴 열림: $showColorMenu")
+                                }
+                                "register" -> {
+                                    if (pointName.isNotBlank()) {
+                                        onRegister()
+                                    }
+                                    Log.d("[Dialog]", "등록 버튼 클릭됨")
+                                }
+                                "cancel" -> {
+                                    onDismiss()
+                                    Log.d("[Dialog]", "취소 버튼 클릭됨")
+                                }
+                            }
+                        }
+                        true
+                    }
+                    198 /* BUTTON_11 */ -> {
+                        // 취소
+                        if (showColorMenu) {
+                            showColorMenu = false
+                        } else {
+                            onDismiss()
+                        }
+                        Log.d("[Dialog]", "취소")
+                        true
+                    }
+                    else -> false
+                }
+            }
     )
 }
 
