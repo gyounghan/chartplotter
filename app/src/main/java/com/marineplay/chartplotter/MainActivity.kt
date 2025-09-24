@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import org.json.JSONArray
 import org.json.JSONObject
@@ -101,6 +102,9 @@ class MainActivity : ComponentActivity() {
     private var showEditDialog by mutableStateOf(false)
     private var editPointName by mutableStateOf("")
     private var editSelectedColor by mutableStateOf(Color.Red)
+
+    // dp → px 변환 헬퍼 (Activity 안에 하나 만들어두면 편합니다)
+    private fun Context.dp(i: Int): Int = (i * resources.displayMetrics.density).toInt()
 
     // 위치 권한 요청 런처
     private val locationPermissionRequest = registerForActivityResult(
@@ -246,6 +250,18 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .padding(innerPadding),
                         onMapReady = { map ->
+
+                            map.uiSettings.apply {
+                                isCompassEnabled = true
+                                // 좌측 상단으로 배치
+                                compassGravity = Gravity.TOP or Gravity.START   // (또는 Gravity.TOP or Gravity.LEFT)
+                                // 마진(좌, 상, 우, 하). 16dp 권장
+                                setCompassMargins(this@MainActivity.dp(16), this@MainActivity.dp(16), 0, 0)
+
+                                // 옵션: 북쪽 정면일 때도 나침반 표시 유지하고 싶으면
+                                // isCompassFadeWhenFacingNorth = false
+                            }
+
                             if (!isMapInitialized) {
                                 mapLibreMap = map
                                 locationManager = LocationManager(this@MainActivity, map)
