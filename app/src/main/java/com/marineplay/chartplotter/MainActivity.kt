@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -181,17 +182,62 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     floatingActionButton = {
-                        FloatingActionButton(
-                            onClick = {
-                                locationManager?.startAutoTracking()
-                            },
-                            modifier = Modifier.size(56.dp)
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_ship),
-                                contentDescription = "내 위치로 이동",
-                                modifier = Modifier.size(24.dp)
-                            )
+                            // 줌 인 버튼
+                            FloatingActionButton(
+                                onClick = {
+                                    mapLibreMap?.let { map ->
+                                        val currentZoom = map.cameraPosition.zoom
+                                        val newZoom = (currentZoom + 1.0).coerceAtMost(20.0)
+                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                                        map.animateCamera(cameraUpdate, 300)
+                                        Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
+                                    }
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Text(
+                                    text = "+",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            // 줌 아웃 버튼
+                            FloatingActionButton(
+                                onClick = {
+                                    mapLibreMap?.let { map ->
+                                        val currentZoom = map.cameraPosition.zoom
+                                        val newZoom = (currentZoom - 1.0).coerceAtLeast(0.0)
+                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                                        map.animateCamera(cameraUpdate, 300)
+                                        Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
+                                    }
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Text(
+                                    text = "-",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            // 현재 위치 버튼
+                            FloatingActionButton(
+                                onClick = {
+                                    locationManager?.startAutoTracking()
+                                },
+                                modifier = Modifier.size(56.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_ship),
+                                    contentDescription = "내 위치로 이동",
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     }
                 ) { innerPadding ->

@@ -21,7 +21,8 @@ data class PMTilesConfig(
 enum class LayerType {
     LINE,      // 선 레이어
     AREA,      // 면 레이어
-    SYMBOL     // 심볼/텍스트 레이어
+    TEXT,     // 텍스트 레이어
+    SYMBOL     // 심볼 레이어
 }
 
 /**
@@ -73,6 +74,30 @@ object PMTilesManager {
             fileName = "p_1_129_soundg.pmtiles",
             sourceName = "depthTiles-source",
             sourceLayer = "P_1_129_SOUNDG",
+            layerType = LayerType.TEXT,
+            hasTextLayer = true,
+            textField = "VALUE"
+        ),
+        PMTilesConfig(
+            fileName = "localName.pmtiles",
+            sourceName = "localTiles-source",
+            sourceLayer = "local_name",
+            layerType = LayerType.TEXT,
+            hasTextLayer = true,
+            textField = "VALUE"
+        ),
+        PMTilesConfig(
+            fileName = "wrecksTiles.pmtiles",
+            sourceName = "wrecks-source",
+            sourceLayer = "wrecks",
+            layerType = LayerType.SYMBOL,
+            hasTextLayer = true,
+            textField = "VALUE"
+        ),
+        PMTilesConfig(
+            fileName = "lighthouse.pmtiles",
+            sourceName = "lighthouse-source",
+            sourceLayer = "lighthouse",
             layerType = LayerType.SYMBOL,
             hasTextLayer = true,
             textField = "VALUE"

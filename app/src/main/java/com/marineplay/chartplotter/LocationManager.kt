@@ -22,6 +22,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.maps.MapLibreMap.OnMapClickListener
 import org.maplibre.android.style.expressions.Expression.*
+import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
@@ -252,36 +253,44 @@ class LocationManager(
     /** 포인트 마커를 지도에 추가 */
     fun addPointsToMap(style: Style) {
         try {
-            // 포인트 마커 아이콘 추가
-            val pointBitmap = createPointIconBitmap(ComposeColor.Red)
-            style.addImage("point-icon", pointBitmap)
-            
-            // 포인트 소스와 레이어 추가
+            // 1) 포인트 소스
             pointsSource = GeoJsonSource(POINTS_SOURCE_ID).also { style.addSource(it) }
-            
-            pointsLayer = SymbolLayer(POINTS_LAYER_ID, POINTS_SOURCE_ID).apply {
+
+            // 2) 포인트 원(circle) 레이어: 색/크기 데이터 기반
+            val circleLayer = CircleLayer(POINTS_LAYER_ID, POINTS_SOURCE_ID).apply {
                 setProperties(
-                    PropertyFactory.iconImage("point-icon"),
-                    PropertyFactory.iconSize(1.0f),
-                    PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconIgnorePlacement(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+                    PropertyFactory.circleRadius(6f),
+                    // updatePointsOnMap에서 넣어줄 "colorHex" 속성을 사용
+                    PropertyFactory.circleColor(toColor(get("colorHex"))),
+                    PropertyFactory.circleOpacity(0.95f),
+                    PropertyFactory.circleStrokeColor(Color.WHITE),
+                    PropertyFactory.circleStrokeWidth(2f),
+                    PropertyFactory.visibility(Property.VISIBLE)
+                )
+                setMinZoom(8.0f)
+            }
+            style.addLayer(circleLayer)
+
+            // 3) 라벨 전용 심볼 레이어(텍스트만)
+            val labelLayer = SymbolLayer("${POINTS_LAYER_ID}-label", POINTS_SOURCE_ID).apply {
+                setProperties(
                     PropertyFactory.textField(get("name")),
                     PropertyFactory.textSize(12f),
                     PropertyFactory.textColor(Color.WHITE),
                     PropertyFactory.textHaloColor(Color.BLACK),
                     PropertyFactory.textHaloWidth(2f),
-                    PropertyFactory.textOffset(arrayOf(0f, -2f)),
+                    PropertyFactory.textOffset(arrayOf(0f, -1.8f)),
                     PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM),
                     PropertyFactory.textAllowOverlap(true),
                     PropertyFactory.visibility(Property.VISIBLE)
                 )
-                setMinZoom(16.0f) // 줌 레벨 8 이상에서만 표시
+                setMinZoom(8.0f)
             }
-            style.addLayer(pointsLayer!!)
-            Log.d("[LocationManager]", "포인트 마커 레이어가 추가되었습니다.")
+            style.addLayer(labelLayer)
+
+            Log.d("[LocationManager]", "포인트(원+라벨) 레이어가 추가되었습니다.")
         } catch (e: Exception) {
-            Log.e("[LocationManager]", "포인트 마커 추가 실패: ${e.message}")
+            Log.e("[LocationManager]", "포인트 레이어 추가 실패: ${e.message}")
         }
     }
     
@@ -322,26 +331,31 @@ class LocationManager(
         
         return bitmap
     }
-    
+
+    private fun composeColorToHex(c: ComposeColor): String {
+        val a = (c.alpha * 255).toInt().coerceIn(0, 255)
+        val r = (c.red   * 255).toInt().coerceIn(0, 255)
+        val g = (c.green * 255).toInt().coerceIn(0, 255)
+        val b = (c.blue  * 255).toInt().coerceIn(0, 255)
+        // 불투명만 쓸 거면 "#RRGGBB", 투명도까지 쓰려면 "#AARRGGBB"
+        return if (a == 255) String.format("#%02X%02X%02X", r, g, b)
+        else String.format("#%02X%02X%02X%02X", a, r, g, b)
+    }
+
     /** 저장된 포인트들을 지도에 표시 */
     fun updatePointsOnMap(points: List<SavedPoint>) {
         try {
             val features = points.map { point ->
                 val geometry = Point.fromLngLat(point.longitude, point.latitude)
+                val colorHex = composeColorToHex(point.color)
                 Feature.fromGeometry(geometry).apply {
                     addStringProperty("name", point.name)
-                    addNumberProperty("color", Color.argb(
-                        (point.color.alpha * 255).toInt(),
-                        (point.color.red * 255).toInt(),
-                        (point.color.green * 255).toInt(),
-                        (point.color.blue * 255).toInt()
-                    ))
+                    addStringProperty("colorHex", colorHex) // ← CircleLayer가 이 값으로 색상 지정
                     addStringProperty("id", "${point.latitude}_${point.longitude}_${point.timestamp}")
                 }
             }
-            
             pointsSource?.setGeoJson(FeatureCollection.fromFeatures(features))
-            Log.d("[LocationManager]", "포인트 ${points.size}개가 지도에 표시되었습니다.")
+            Log.d("[LocationManager]", "포인트 ${points.size}개 업데이트 (색상 반영).")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "포인트 업데이트 실패: ${e.message}")
         }

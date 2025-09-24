@@ -1,14 +1,27 @@
 package com.marineplay.chartplotter
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.util.Log
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression.*
+import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circleOpacity
+import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconAnchor
+import org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
+import org.maplibre.android.style.layers.PropertyFactory.iconSize
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.VectorSource
 import java.io.File
@@ -74,7 +87,7 @@ object PMTilesLoader {
             }
             
             // MapLibre에 PMTiles 적용
-            applyPMTilesToMap(map, pmtilesConfigs, copiedFiles)
+            applyPMTilesToMap(map, pmtilesConfigs, copiedFiles, context)
             
         } catch (e: Exception) {
             Log.e("[PMTilesLoader]", "PMTiles 로드 중 오류: ${e.message}")
@@ -86,7 +99,7 @@ object PMTilesLoader {
     /**
      * PMTiles를 MapLibre에 적용하는 함수
      */
-    private fun applyPMTilesToMap(map: MapLibreMap, configs: List<PMTilesConfig>, files: List<File>) {
+    private fun applyPMTilesToMap(map: MapLibreMap, configs: List<PMTilesConfig>, files: List<File>, context: Context) {
         val styleJson = """
 {
   "version": 8,
@@ -122,7 +135,9 @@ object PMTilesLoader {
                     when (config.layerType) {
                         LayerType.LINE -> addLineLayer(style, config)
                         LayerType.AREA -> addAreaLayer(style, config)
-                        LayerType.SYMBOL -> addSymbolLayer(style, config)
+                        LayerType.TEXT -> addTextLayer(style, config)
+                        LayerType.SYMBOL -> addSymbolLayer(style, config, context)
+
                     }
                 }
                 
@@ -221,21 +236,28 @@ object PMTilesLoader {
     /**
      * 심볼/텍스트 레이어를 추가하는 함수
      */
-    private fun addSymbolLayer(style: Style, config: PMTilesConfig) {
+    private fun addTextLayer(style: Style, config: PMTilesConfig) {
         if (!config.hasTextLayer) return
-        
+        val isDepth = config.sourceName.contains("depth", ignoreCase = true)
+
         val symbolLayer = SymbolLayer("${config.sourceName}-labels", config.sourceName).apply {
             setSourceLayer(config.sourceLayer)
             minZoom = 0f
-            maxZoom = 24f
+            maxZoom = 32f
             
             setProperties(
                 // 텍스트 필드 설정
                 PropertyFactory.textField(
-                    concat(
-                        toString(round(toNumber(get(config.textField)))),
-                        literal(" m")
-                    )
+                    if (config.sourceName.contains("depth", ignoreCase = true)) {
+                        // depth가 포함된 파일: 숫자로 처리하고 "m" 단위 추가
+                        concat(
+                            toString(round(toNumber(get(config.textField)))),
+                            literal(" m")
+                        )
+                    } else {
+                        // 일반 텍스트 필드: 그대로 표시
+                        get(config.textField)
+                    }
                 ),
                 PropertyFactory.textSize(
                     interpolate(
@@ -249,15 +271,84 @@ object PMTilesLoader {
                 PropertyFactory.textAllowOverlap(false),
                 PropertyFactory.textIgnorePlacement(false)
             )
-            
+            // ✅ 레이어별 필터 분기
+            if (isDepth) {
+                // 숫자(0 초과)만 표시
+                setFilter(all(
+                    has(config.textField),
+                    gt(toNumber(get(config.textField)), literal(0))
+                ))
+            } else {
+                // 문자열(빈 값 제외) 표시
+                setFilter(all(
+                    has(config.textField),
+                    neq(get(config.textField), literal(""))
+                    // 또는: gt(length(get(config.textField)), literal(0))
+                ))
+            }
             // 0 또는 값 없음은 숨기기
-            setFilter(all(has(config.textField), gt(toNumber(get(config.textField)), literal(0))))
+//            setFilter(all(has(config.textField), gt(toNumber(get(config.textField)), literal(0))))
         }
         
         style.addLayer(symbolLayer)
         Log.d("[PMTilesLoader]", "심볼 레이어 추가됨: ${config.sourceName}-labels")
     }
-    
+
+
+    private fun addSymbolLayer(style: Style, config: PMTilesConfig, context: Context) {
+        // 파일명에 따라 아이콘 결정
+        val iconName = when {
+            config.fileName.contains("lighthouse", ignoreCase = true) -> "lighthouse"
+            config.fileName.contains("local", ignoreCase = true) -> "wreck_symbol"
+            else -> "wreck_symbol" // 기본값
+        }
+        val iconId = "${iconName}-icon"
+        
+        // 1) drawable PNG를 스타일 이미지로 등록
+        if (style.getImage(iconId) == null) {
+            try {
+                val resourceId = context.resources.getIdentifier(iconName, "drawable", context.packageName)
+                if (resourceId != 0) {
+                    val bmp = BitmapFactory.decodeResource(context.resources, resourceId)
+                    style.addImage(iconId, bmp)
+                    Log.d("[PMTilesLoader]", "아이콘 로드 완료: $iconName")
+                } else {
+                    Log.w("[PMTilesLoader]", "아이콘 리소스를 찾을 수 없음: $iconName")
+                    return
+                }
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "아이콘 로드 실패: $iconName, ${e.message}")
+                return
+            }
+        }
+
+        // 2) 해당 이미지를 쓰는 SymbolLayer 생성
+        val layer = SymbolLayer("${config.sourceName}-symbols", config.sourceName).apply {
+            setSourceLayer(config.sourceLayer)
+            minZoom = 16f
+            maxZoom = 24f
+
+            setProperties(
+                iconImage(iconId),
+                iconAllowOverlap(true),
+                iconIgnorePlacement(false),
+                iconAnchor(Property.ICON_ANCHOR_CENTER),
+                // 확대할수록 살짝 키우기
+                iconSize(
+                    interpolate(
+                        exponential(0.1f), zoom(),
+                        stop( 0, 0.1f),
+                        stop(12, 0.1f),
+                        stop(16, 0.1f)
+                    )
+                )
+            )
+        }
+
+        style.addLayer(layer)
+        Log.d("[PMTilesLoader]", "심볼 레이어 추가: ${config.sourceName}-symbols ($iconName)")
+    }
+
     /**
      * 기본 스타일을 로드하는 함수
      */
