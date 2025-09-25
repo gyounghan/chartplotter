@@ -256,20 +256,18 @@ class LocationManager(
             // 1) 포인트 소스
             pointsSource = GeoJsonSource(POINTS_SOURCE_ID).also { style.addSource(it) }
 
-            // 2) 포인트 원(circle) 레이어: 색/크기 데이터 기반
-            val circleLayer = CircleLayer(POINTS_LAYER_ID, POINTS_SOURCE_ID).apply {
+            // 2) 포인트 심볼 레이어 (클릭 이벤트 지원)
+            pointsLayer = SymbolLayer(POINTS_LAYER_ID, POINTS_SOURCE_ID).apply {
                 setProperties(
-                    PropertyFactory.circleRadius(6f),
-                    // updatePointsOnMap에서 넣어줄 "colorHex" 속성을 사용
-                    PropertyFactory.circleColor(toColor(get("colorHex"))),
-                    PropertyFactory.circleOpacity(0.95f),
-                    PropertyFactory.circleStrokeColor(Color.WHITE),
-                    PropertyFactory.circleStrokeWidth(2f),
+                    PropertyFactory.iconImage(get("iconId")), // 동적 아이콘 ID
+                    PropertyFactory.iconSize(1.0f),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconIgnorePlacement(false),
                     PropertyFactory.visibility(Property.VISIBLE)
                 )
                 setMinZoom(8.0f)
             }
-            style.addLayer(circleLayer)
+            style.addLayer(pointsLayer!!)
 
             // 3) 라벨 전용 심볼 레이어(텍스트만)
             val labelLayer = SymbolLayer("${POINTS_LAYER_ID}-label", POINTS_SOURCE_ID).apply {
@@ -288,7 +286,7 @@ class LocationManager(
             }
             style.addLayer(labelLayer)
 
-            Log.d("[LocationManager]", "포인트(원+라벨) 레이어가 추가되었습니다.")
+            Log.d("[LocationManager]", "포인트(심볼+라벨) 레이어가 추가되었습니다.")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "포인트 레이어 추가 실패: ${e.message}")
         }
@@ -345,54 +343,28 @@ class LocationManager(
     /** 저장된 포인트들을 지도에 표시 */
     fun updatePointsOnMap(points: List<SavedPoint>) {
         try {
-            val features = points.map { point ->
+            // 각 포인트마다 고유한 아이콘 생성 및 스타일에 추가
+            points.forEachIndexed { index, point ->
+                val iconId = "point-icon-$index"
+                val bitmap = createPointIconBitmap(point.color)
+                map.style?.addImage(iconId, bitmap)
+            }
+            
+            val features = points.mapIndexed { index, point ->
                 val geometry = Point.fromLngLat(point.longitude, point.latitude)
                 val colorHex = composeColorToHex(point.color)
                 Feature.fromGeometry(geometry).apply {
                     addStringProperty("name", point.name)
-                    addStringProperty("colorHex", colorHex) // ← CircleLayer가 이 값으로 색상 지정
+                    addStringProperty("colorHex", colorHex)
                     addStringProperty("id", "${point.latitude}_${point.longitude}_${point.timestamp}")
+                    addStringProperty("iconId", "point-icon-$index") // 고유 아이콘 ID
                 }
             }
             pointsSource?.setGeoJson(FeatureCollection.fromFeatures(features))
-            Log.d("[LocationManager]", "포인트 ${points.size}개 업데이트 (색상 반영).")
+            Log.d("[LocationManager]", "포인트 ${points.size}개 업데이트 (심볼 레이어).")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "포인트 업데이트 실패: ${e.message}")
         }
     }
     
-    /** 포인트 클릭 리스너 설정 */
-    fun setOnPointClickListener(listener: (SavedPoint) -> Unit) {
-        onPointClickListener = listener
-    }
-    
-    /** 포인트 클릭 이벤트 처리 */
-    fun handlePointClick(latLng: LatLng, points: List<SavedPoint>): Boolean {
-        // 클릭된 위치와 가장 가까운 포인트 찾기 (10미터 이내)
-        val clickedPoint = points.find { point ->
-            val distance = calculateDistance(
-                latLng.latitude, latLng.longitude,
-                point.latitude, point.longitude
-            )
-            distance <= 10.0 // 10미터 이내
-        }
-        
-        clickedPoint?.let { point ->
-            onPointClickListener?.invoke(point)
-            return true
-        }
-        return false
-    }
-    
-    /** 두 좌표 간의 거리 계산 (미터) */
-    private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val earthRadius = 6371000.0 // 지구 반지름 (미터)
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-        return earthRadius * c
-    }
 }

@@ -24,6 +24,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Row
@@ -33,14 +34,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +63,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
@@ -102,6 +116,8 @@ class MainActivity : ComponentActivity() {
     private var showEditDialog by mutableStateOf(false)
     private var editPointName by mutableStateOf("")
     private var editSelectedColor by mutableStateOf(Color.Red)
+    private var showMenu by mutableStateOf(false)
+    private var currentMenu by mutableStateOf("main") // "main", "point", "ais"
 
     // dp → px 변환 헬퍼 (Activity 안에 하나 만들어두면 편합니다)
     private fun Context.dp(i: Int): Int = (i * resources.displayMetrics.density).toInt()
@@ -142,6 +158,7 @@ class MainActivity : ComponentActivity() {
         // MapLibre 초기화
         MapLibre.getInstance(this)
 
+        @OptIn(ExperimentalMaterial3Api::class)
         setContent {
             ChartPlotterTheme {
                 // 포인트 등록 다이얼로그 표시
@@ -239,24 +256,38 @@ class MainActivity : ComponentActivity() {
                                 
                                 // 지도 클릭 이벤트 처리 (포인트 마커 클릭 감지)
                                 map.addOnMapClickListener { latLng ->
-                                    val savedPoints = loadPointsFromLocal()
-                                    val pointClicked = locationManager?.handlePointClick(latLng, savedPoints) ?: false
-                                    if (pointClicked) {
-                                        // 포인트가 클릭되었으면 true 반환하여 기본 지도 클릭 이벤트 방지
-                                        true
+                                    // 클릭된 위치에서 포인트 레이어의 피처들을 쿼리
+                                    val screenPoint = map.projection.toScreenLocation(latLng)
+                                    val features = map.queryRenderedFeatures(
+                                        android.graphics.PointF(screenPoint.x, screenPoint.y),
+                                        "points-symbol"
+                                    )
+                                    
+                                    if (features.isNotEmpty()) {
+                                        // 포인트가 클릭되었음
+                                        val feature = features.first()
+                                        val pointName = feature.getStringProperty("name") ?: ""
+                                        val pointId = feature.getStringProperty("id") ?: ""
+                                        
+                                        // 저장된 포인트 목록에서 해당 포인트 찾기
+                                        val savedPoints = loadPointsFromLocal()
+                                        val clickedPoint = savedPoints.find { point ->
+                                            "${point.latitude}_${point.longitude}_${point.timestamp}" == pointId
+                                        }
+                                        
+                                        clickedPoint?.let { point ->
+                                            selectedPoint = point
+                                            editPointName = point.name
+                                            editSelectedColor = point.color
+                                            showPointManageDialog = true
+                                        }
+                                        
+                                        true // 기본 지도 클릭 이벤트 방지
                                     } else {
-                                        // 포인트가 클릭되지 않았으면 기본 지도 클릭 이벤트 허용
-                                        false
+                                        false // 기본 지도 클릭 이벤트 허용
                                     }
                                 }
                                 
-                                // 포인트 클릭 리스너 설정
-                                locationManager?.setOnPointClickListener { point ->
-                                    selectedPoint = point
-                                    editPointName = point.name
-                                    editSelectedColor = point.color
-                                    showPointManageDialog = true
-                                }
 
                                 // 위치 권한 확인 및 요청
                                 if (ContextCompat.checkSelfPermission(
@@ -282,6 +313,212 @@ class MainActivity : ComponentActivity() {
                         isDialogShown = showDialog // ⬅ 전달
                     )
                     
+                    // 우측 상단 메뉴 버튼
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .statusBarsPadding(),
+                        contentAlignment = Alignment.TopEnd
+                    ) {
+                        FloatingActionButton(
+                            onClick = { showMenu = !showMenu },
+                            shape = RoundedCornerShape(16.dp),
+                            containerColor = Color(0xC6E2E2E2),
+                            contentColor = Color.Black,
+                            elevation = FloatingActionButtonDefaults.elevation(
+                                defaultElevation = 0.dp,                   // ✅ 내부가 밝아 보이는 효과 최소화
+                                pressedElevation = 0.dp,
+                                focusedElevation = 0.dp,
+                                hoveredElevation = 0.dp
+                            ),
+                            modifier = Modifier
+                                .size(48.dp)
+//                                    .clip(CircleShape)
+                                .border(
+                                    width = 1.dp,
+                                    color = Color.White,
+                                    shape =  RoundedCornerShape(16.dp)
+                                ),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "메뉴"
+                            )
+                        }
+                    }
+                    
+                    // 메뉴바 (우측에 고정, 지도 조작 방해하지 않음)
+                    if (showMenu) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(250.dp)
+                                    .fillMaxHeight()
+                                    .background(Color.DarkGray.copy(alpha = 0.8f))
+                                    .padding(16.dp)
+                            ) {
+                                Column {
+                                    // 메뉴 헤더 (제목 + 닫기/뒤로가기 버튼)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = when (currentMenu) {
+                                                "main" -> "메뉴"
+                                                "point" -> "포인트"
+                                                "ais" -> "AIS"
+                                                else -> "메뉴"
+                                            },
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                        IconButton(
+                                            onClick = { 
+                                                if (currentMenu == "main") {
+                                                    showMenu = false
+                                                } else {
+                                                    currentMenu = "main"
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = if (currentMenu == "main") Icons.Default.Close else Icons.Default.ArrowBack,
+                                                contentDescription = if (currentMenu == "main") "메뉴 닫기" else "뒤로가기",
+                                                tint = Color.White
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    
+                                    // 메인 메뉴
+                                    if (currentMenu == "main") {
+                                        Text(
+                                            "포인트", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = "point"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "AIS", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = "ais"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "설정", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    // TODO: 설정 화면 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "정보", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    // TODO: 정보 화면 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                    }
+                                    
+                                    // 포인트 메뉴
+                                    if (currentMenu == "point") {
+                                        Text(
+                                            "포인트 생성", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    // 현재 화면 중앙 좌표 가져오기
+                                                    mapLibreMap?.cameraPosition?.target?.let { latLng ->
+                                                        currentLatLng = latLng
+                                                        centerCoordinates = "위도: ${String.format("%.6f", latLng.latitude)}\n경도: ${String.format("%.6f", latLng.longitude)}"
+                                                        pointName = "" // 포인트명 초기화
+                                                        selectedColor = Color.Red // 색상 초기화
+                                                    } ?: run {
+                                                        centerCoordinates = "좌표를 가져올 수 없습니다."
+                                                        currentLatLng = null
+                                                    }
+                                                    showMenu = false
+                                                    showDialog = true
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "포인트 삭제", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    // TODO: 포인트 삭제 화면 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "포인트 변경", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    // TODO: 포인트 변경 화면 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                    }
+                                    
+                                    // AIS 메뉴
+                                    if (currentMenu == "ais") {
+                                        Text(
+                                            "AIS ON/OFF", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    // TODO: AIS ON/OFF 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "AIS 설정", 
+                                            modifier = Modifier
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    // TODO: AIS 설정 화면 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
                     // 줌 인/아웃 버튼 (가운데 하단)
                     Box(
                         modifier = Modifier
@@ -290,7 +527,7 @@ class MainActivity : ComponentActivity() {
                         contentAlignment = Alignment.BottomCenter
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             // 줌 아웃 버튼
                             FloatingActionButton(
@@ -303,7 +540,23 @@ class MainActivity : ComponentActivity() {
                                         Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
                                     }
                                 },
-                                modifier = Modifier.size(48.dp)
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = Color(0xC6E2E2E2),
+                                contentColor = Color.Black,
+                                elevation = FloatingActionButtonDefaults.elevation(
+                                    defaultElevation = 0.dp,                   // ✅ 내부가 밝아 보이는 효과 최소화
+                                    pressedElevation = 0.dp,
+                                    focusedElevation = 0.dp,
+                                    hoveredElevation = 0.dp
+                                ),
+                                modifier = Modifier
+                                    .size(56.dp)
+//                                    .clip(CircleShape)
+                                    .border(
+                                        width = 1.dp,
+                                        color = Color.White,
+                                        shape =  RoundedCornerShape(16.dp)
+                                    ),
                             ) {
                                 Text(
                                     text = "-",
@@ -323,7 +576,23 @@ class MainActivity : ComponentActivity() {
                                         Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
                                     }
                                 },
-                                modifier = Modifier.size(48.dp)
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = Color(0xC6E2E2E2),
+                                contentColor = Color.Black,
+                                elevation = FloatingActionButtonDefaults.elevation(
+                                    defaultElevation = 0.dp,                   // ✅ 내부가 밝아 보이는 효과 최소화
+                                    pressedElevation = 0.dp,
+                                    focusedElevation = 0.dp,
+                                    hoveredElevation = 0.dp
+                                ),
+                                modifier = Modifier
+                                    .size(56.dp)
+//                                    .clip(CircleShape)
+                                    .border(
+                                        width = 1.dp,
+                                        color = Color.White,
+                                        shape =  RoundedCornerShape(16.dp)
+                                    ),
                             ) {
                                 Text(
                                     text = "+",

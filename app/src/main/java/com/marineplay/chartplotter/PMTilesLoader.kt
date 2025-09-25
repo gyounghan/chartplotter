@@ -325,7 +325,7 @@ object PMTilesLoader {
         // 2) 해당 이미지를 쓰는 SymbolLayer 생성
         val layer = SymbolLayer("${config.sourceName}-symbols", config.sourceName).apply {
             setSourceLayer(config.sourceLayer)
-            minZoom = 16f
+            minZoom = 12f
             maxZoom = 24f
 
             setProperties(
@@ -338,8 +338,8 @@ object PMTilesLoader {
                     interpolate(
                         exponential(0.1f), zoom(),
                         stop( 0, 0.1f),
-                        stop(12, 0.1f),
-                        stop(16, 0.1f)
+                        stop(14, 0.1f),
+                        stop(16, 0.2f)
                     )
                 )
             )
