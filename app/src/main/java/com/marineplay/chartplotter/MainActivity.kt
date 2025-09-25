@@ -186,62 +186,18 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     floatingActionButton = {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        // 현재 위치 버튼 (우측 하단)
+                        FloatingActionButton(
+                            onClick = {
+                                locationManager?.startAutoTracking()
+                            },
+                            modifier = Modifier.size(56.dp)
                         ) {
-                            // 줌 인 버튼
-                            FloatingActionButton(
-                                onClick = {
-                                    mapLibreMap?.let { map ->
-                                        val currentZoom = map.cameraPosition.zoom
-                                        val newZoom = (currentZoom + 1.0).coerceAtMost(20.0)
-                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
-                                        map.animateCamera(cameraUpdate, 300)
-                                        Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
-                                    }
-                                },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Text(
-                                    text = "+",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            
-                            // 줌 아웃 버튼
-                            FloatingActionButton(
-                                onClick = {
-                                    mapLibreMap?.let { map ->
-                                        val currentZoom = map.cameraPosition.zoom
-                                        val newZoom = (currentZoom - 1.0).coerceAtLeast(0.0)
-                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
-                                        map.animateCamera(cameraUpdate, 300)
-                                        Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
-                                    }
-                                },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Text(
-                                    text = "-",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            
-                            // 현재 위치 버튼
-                            FloatingActionButton(
-                                onClick = {
-                                    locationManager?.startAutoTracking()
-                                },
-                                modifier = Modifier.size(56.dp)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_ship),
-                                    contentDescription = "내 위치로 이동",
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_ship),
+                                contentDescription = "내 위치로 이동",
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 ) { innerPadding ->
@@ -325,6 +281,58 @@ class MainActivity : ComponentActivity() {
                         },
                         isDialogShown = showDialog // ⬅ 전달
                     )
+                    
+                    // 줌 인/아웃 버튼 (가운데 하단)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 줌 아웃 버튼
+                            FloatingActionButton(
+                                onClick = {
+                                    mapLibreMap?.let { map ->
+                                        val currentZoom = map.cameraPosition.zoom
+                                        val newZoom = (currentZoom - 1.0).coerceAtLeast(0.0)
+                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                                        map.animateCamera(cameraUpdate, 300)
+                                        Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
+                                    }
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Text(
+                                    text = "-",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            // 줌 인 버튼
+                            FloatingActionButton(
+                                onClick = {
+                                    mapLibreMap?.let { map ->
+                                        val currentZoom = map.cameraPosition.zoom
+                                        val newZoom = (currentZoom + 1.0).coerceAtMost(20.0)
+                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                                        map.animateCamera(cameraUpdate, 300)
+                                        Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
+                                    }
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Text(
+                                    text = "+",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
