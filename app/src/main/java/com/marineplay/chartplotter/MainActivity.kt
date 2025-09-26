@@ -41,8 +41,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -118,6 +121,7 @@ class MainActivity : ComponentActivity() {
     private var editSelectedColor by mutableStateOf(Color.Red)
     private var showMenu by mutableStateOf(false)
     private var currentMenu by mutableStateOf("main") // "main", "point", "ais"
+    private var showPointDeleteList by mutableStateOf(false)
 
     // dp → px 변환 헬퍼 (Activity 안에 하나 만들어두면 편합니다)
     private fun Context.dp(i: Int): Int = (i * resources.displayMetrics.density).toInt()
@@ -200,6 +204,15 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 
+                // 포인트 삭제 목록 다이얼로그 표시
+                if (showPointDeleteList) {
+                    PointDeleteListDialog(
+                        points = loadPointsFromLocal(),
+                        onDeletePoint = { point -> deletePoint(point) },
+                        onDismiss = { showPointDeleteList = false }
+                    )
+                }
+                
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     floatingActionButton = {
@@ -238,6 +251,9 @@ class MainActivity : ComponentActivity() {
                             if (!isMapInitialized) {
                                 mapLibreMap = map
                                 locationManager = LocationManager(this@MainActivity, map)
+
+                                // 센서 초기화
+                                locationManager?.initializeSensors()
 
                                 // PMTiles 로드 후 선박 아이콘과 포인트 마커 추가를 위해 스타일 로드 완료를 기다림
                                 map.getStyle { style ->
@@ -473,7 +489,7 @@ class MainActivity : ComponentActivity() {
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
-                                                    // TODO: 포인트 삭제 화면 구현
+                                                    showPointDeleteList = true
                                                 },
                                             color = Color.White
                                         )
@@ -892,6 +908,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         locationManager?.stopLocationUpdates()
+        locationManager?.unregisterSensors()
     }
 }
 
@@ -1424,6 +1441,102 @@ fun PointEditDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("취소")
+            }
+        }
+    )
+}
+
+@Composable
+fun PointDeleteListDialog(
+    points: List<SavedPoint>,
+    onDeletePoint: (SavedPoint) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var showDeleteConfirm by remember { mutableStateOf<SavedPoint?>(null) }
+    
+    // 삭제 확인 다이얼로그
+    if (showDeleteConfirm != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = null },
+            title = { Text("포인트 삭제") },
+            text = { 
+                Text("'${showDeleteConfirm!!.name}' 포인트를 삭제하시겠습니까?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeletePoint(showDeleteConfirm!!)
+                        showDeleteConfirm = null
+                        onDismiss()
+                    }
+                ) {
+                    Text("삭제")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = null }) {
+                    Text("취소")
+                }
+            }
+        )
+    }
+    
+    // 포인트 목록 다이얼로그
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("포인트 삭제") },
+        text = {
+            if (points.isEmpty()) {
+                Text("삭제할 포인트가 없습니다.")
+            } else {
+                LazyColumn(
+                    modifier = Modifier.height(400.dp)
+                ) {
+                    items(points) { point ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .background(point.color, CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = point.name,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "위도: ${String.format("%.6f", point.latitude)}\n경도: ${String.format("%.6f", point.longitude)}",
+                                        fontSize = 12.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = { showDeleteConfirm = point },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.Red
+                                )
+                            ) {
+                                Text("삭제", color = Color.White)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("닫기")
             }
         }
     )

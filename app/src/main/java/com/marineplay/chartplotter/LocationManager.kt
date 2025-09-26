@@ -9,6 +9,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.os.Looper
@@ -41,17 +46,24 @@ import android.location.LocationManager as SysLocationManager
 class LocationManager(
     private val context: Context,
     private val map: MapLibreMap
-) : LocationListener {
+) : LocationListener, SensorEventListener {
 
     // 시스템 LocationManager
     private val lm = context.getSystemService(Context.LOCATION_SERVICE) as SysLocationManager
+    
+    // 센서 관련
+    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private var orientationSensor: Sensor? = null
+    private var currentBearing: Float = 0f // 현재 방위각 (도)
 
     private var currentLocation: Location? = null
     private var shipSource: GeoJsonSource? = null
     private var shipLayer: SymbolLayer? = null
     private var isAutoTracking = false // 자동 추적 상태
     private var savedZoomLevel: Double? = null // 사용자가 설정한 줌 레벨 저장
-    
+    private var rotationVector: Sensor? =
+        sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
     // 포인트 마커 관련
     private var pointsSource: GeoJsonSource? = null
     private var pointsLayer: SymbolLayer? = null
@@ -161,7 +173,8 @@ class LocationManager(
     /** 선박 아이콘을 지도에 추가 */
     fun addShipToMap(style: Style) {
         try {
-            val shipBitmap = createShipIconBitmap()
+            // 북쪽(위쪽)을 향하는 삼각형 비트맵을 1번만 등록
+            val shipBitmap = createShipTriangleIcon(0f)
             style.addImage("ship-icon", shipBitmap)
 
             shipSource = GeoJsonSource(SHIP_SOURCE_ID).also { style.addSource(it) }
@@ -172,20 +185,49 @@ class LocationManager(
                     PropertyFactory.iconSize(1.0f),
                     PropertyFactory.iconAllowOverlap(true),
                     PropertyFactory.iconIgnorePlacement(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER)
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+                    PropertyFactory.iconRotate(get("bearing")),
+                    PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP)
                 )
             }
             style.addLayer(shipLayer!!)
-            Log.d("[LocationManager]", "선박 아이콘 레이어가 추가되었습니다.")
+            Log.d("[LocationManager]", "삼각형 선박 아이콘 레이어가 추가되었습니다.")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "선박 아이콘 추가 실패: ${e.message}")
         }
     }
 
-    /** 선박 위치 업데이트 */
+    /** 선박 위치 업데이트 (방향 포함) */
     private fun updateShipLocation(location: Location) {
-        val point = Point.fromLngLat(location.longitude, location.latitude)
-        shipSource?.setGeoJson(FeatureCollection.fromFeature(Feature.fromGeometry(point)))
+        try {
+            val latLng = LatLng(location.latitude, location.longitude)
+
+            // 1) 이동 중이면 GPS bearing 우선
+            val speedMps = location.speed     // m/s
+            val gpsBearing = if (location.hasBearing() && speedMps > 0.8f) location.bearing else null
+
+            // 2) 정지/저속이면 센서 방위 사용
+            val bearing = gpsBearing ?: currentBearing
+
+            // 3) 피처에 bearing 속성 포함
+            val feature = Feature.fromGeometry(
+                Point.fromLngLat(latLng.longitude, latLng.latitude)
+            ).apply {
+                addNumberProperty("bearing", ((bearing % 360) + 360) % 360) // 0~360 정규화
+            }
+
+//            // 회전된 삼각형 아이콘 생성
+//            val shipIcon = createShipTriangleIcon(bearing)
+//
+//            // 스타일에 아이콘 추가
+//            map.style?.addImage("ship-icon", shipIcon)
+            
+            shipSource?.setGeoJson(feature)
+            
+            Log.d("[LocationManager]", "선박 아이콘 업데이트: 방위각 ${bearing}도")
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "선박 아이콘 업데이트 실패: ${e.message}")
+        }
     }
 
     /** 지도 중앙을 현재 위치로 이동 (줌 레벨 유지) */
@@ -366,5 +408,118 @@ class LocationManager(
             Log.e("[LocationManager]", "포인트 업데이트 실패: ${e.message}")
         }
     }
+    
+    /** 센서 초기화 */
+    fun initializeSensors() {
+        orientationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION)
+        if (orientationSensor != null) {
+            sensorManager.registerListener(this, orientationSensor, SensorManager.SENSOR_DELAY_UI)
+            Log.d("[LocationManager]", "방향 센서 등록 완료")
+        } else {
+            Log.w("[LocationManager]", "방향 센서를 사용할 수 없습니다")
+        }
+        rotationVector?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            Log.d("[LocationManager]", "Rotation Vector 센서 등록 완료")
+        } ?: Log.w("[LocationManager]", "Rotation Vector 센서를 사용할 수 없습니다")
+    }
+    
+    /** 센서 해제 */
+    fun unregisterSensors() {
+        sensorManager.unregisterListener(this)
+        Log.d("[LocationManager]", "센서 해제 완료")
+    }
+    
+    /** SensorEventListener 구현 */
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type != Sensor.TYPE_ROTATION_VECTOR) return
+
+        val rot = FloatArray(9)
+        val outRot = FloatArray(9)
+        val ori = FloatArray(3)
+
+        // 1) 회전행렬
+        SensorManager.getRotationMatrixFromVector(rot, event.values)
+
+        // 2) 화면 회전에 따른 좌표계 remap (기기 방향 보정)
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val rotation = wm.defaultDisplay.rotation
+        val axisX = when (rotation) {
+            android.view.Surface.ROTATION_90  -> SensorManager.AXIS_Y
+            android.view.Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y
+            else -> SensorManager.AXIS_X
+        }
+        val axisY = when (rotation) {
+            android.view.Surface.ROTATION_90  -> SensorManager.AXIS_MINUS_X
+            android.view.Surface.ROTATION_270 -> SensorManager.AXIS_X
+            else -> SensorManager.AXIS_Y
+        }
+        SensorManager.remapCoordinateSystem(rot, axisX, axisY, outRot)
+
+        // 3) 오일러 각 (azimuth, pitch, roll)
+        SensorManager.getOrientation(outRot, ori)
+        val azimuthRad = ori[0]
+        val azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
+
+        // 4) 0~360 정규화
+        currentBearing = ((azimuthDeg % 360f) + 360f) % 360f
+
+        // 위치가 있다면 즉시 갱신(정지 상태에서도 머리방향이 바뀌도록)
+        currentLocation?.let { updateShipLocation(it) }
+    }
+    
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        // 센서 정확도 변경 시 처리 (필요시)
+    }
+    
+    /** 삼각형 선박 아이콘 생성 */
+    private fun createShipTriangleIcon(bearing: Float): Bitmap {
+        val size = 72
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        
+        val paint = Paint().apply {
+            color = Color.RED
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        
+        val strokePaint = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            isAntiAlias = true
+        }
+        
+        val centerX = size / 2f
+        val centerY = size / 2f
+        val radius = size / 2f - 6f
+        
+        // 삼각형 경로 생성 (북쪽을 향하는 삼각형)
+        val path = Path()
+        val angle = Math.toRadians(bearing.toDouble())
+        
+        // 삼각형의 세 점 계산 (회전 적용)
+        val frontX = centerX + (radius * 0.8f * Math.sin(angle)).toFloat()
+        val frontY = centerY - (radius * 0.8f * Math.cos(angle)).toFloat()
+        
+        val backLeftX = centerX + (radius * 0.4f * Math.sin(angle + Math.PI * 2/3)).toFloat()
+        val backLeftY = centerY - (radius * 0.4f * Math.cos(angle + Math.PI * 2/3)).toFloat()
+        
+        val backRightX = centerX + (radius * 0.4f * Math.sin(angle - Math.PI * 2/3)).toFloat()
+        val backRightY = centerY - (radius * 0.4f * Math.cos(angle - Math.PI * 2/3)).toFloat()
+        
+        path.moveTo(frontX, frontY)
+        path.lineTo(backLeftX, backLeftY)
+        path.lineTo(backRightX, backRightY)
+        path.close()
+        
+        // 삼각형 그리기
+        canvas.drawPath(path, paint)
+        canvas.drawPath(path, strokePaint)
+        
+        return bitmap
+    }
+    
     
 }
