@@ -27,6 +27,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -40,6 +42,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -55,8 +59,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.FabPosition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +81,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -92,13 +101,22 @@ import org.maplibre.android.maps.OnMapReadyCallback
 import org.maplibre.android.maps.Style
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.LifecycleEventObserver
+import org.maplibre.android.geometry.LatLngBounds
 
 data class SavedPoint(
     val name: String,
     val latitude: Double,
     val longitude: Double,
     val color: Color,
+    val iconType: String, // "circle", "triangle", "square"
     val timestamp: Long
+)
+
+data class Destination(
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 class MainActivity : ComponentActivity() {
@@ -122,9 +140,302 @@ class MainActivity : ComponentActivity() {
     private var showMenu by mutableStateOf(false)
     private var currentMenu by mutableStateOf("main") // "main", "point", "ais"
     private var showPointDeleteList by mutableStateOf(false)
+    
+    // GPS 좌표 표시 관련
+    private var currentGpsLatitude by mutableStateOf(0.0)
+    private var currentGpsLongitude by mutableStateOf(0.0)
+    private var isGpsAvailable by mutableStateOf(false)
+    private var currentShipCog by mutableStateOf(0.0f) // 선박 COG (방향)
+    
+    // 동적 커서 관련
+    private var showCursor by mutableStateOf(false)
+    private var cursorLatLng by mutableStateOf<LatLng?>(null)
+    private var cursorScreenPosition by mutableStateOf<android.graphics.PointF?>(null)
+    
+    // 포인트 아이콘 관련
+    private var selectedIconType by mutableStateOf("circle") // "circle", "triangle", "square"
+    private var pointCount by mutableStateOf(0) // 현재 포인트 수
+    
+    // 지도 표시 모드 관련
+    private var mapDisplayMode by mutableStateOf("노스업") // 노스업, 헤딩업, 코스업
+    private var courseDestination by mutableStateOf<LatLng?>(null) // 코스업용 목적지
+    private var showDestinationDialog by mutableStateOf(false) // 목적지 설정 다이얼로그
+    private var showDestinationManageDialog by mutableStateOf(false) // 목적지 관리 다이얼로그
+    private var showDestinationCreateDialog by mutableStateOf(false) // 목적지 생성 다이얼로그
+    private var destinationLatitude by mutableStateOf("")
+    private var destinationLongitude by mutableStateOf("")
+    private var destinationName by mutableStateOf("")
+    private var savedDestinations by mutableStateOf<List<Destination>>(emptyList())
+    
+    // 목적지 클릭 팝업 관련
+    private var showDestinationPopup by mutableStateOf(false)
+    private var clickedDestination by mutableStateOf<Destination?>(null)
+    private var popupPosition by mutableStateOf<android.graphics.PointF?>(null)
 
     // dp → px 변환 헬퍼 (Activity 안에 하나 만들어두면 편합니다)
     private fun Context.dp(i: Int): Int = (i * resources.displayMetrics.density).toInt()
+    
+    // 사용 가능한 최소 포인트 번호 찾기
+    private fun getNextAvailablePointNumber(): Int {
+        val existingPoints = loadPointsFromLocal()
+        val usedNumbers = existingPoints.mapNotNull { point ->
+            // "Point123" 형태에서 숫자 부분만 추출
+            val matchResult = Regex("Point(\\d+)").find(point.name)
+            matchResult?.groupValues?.get(1)?.toIntOrNull()
+        }.toSet()
+        
+        // 1부터 시작해서 사용되지 않은 첫 번째 번호 찾기
+        var nextNumber = 1
+        while (usedNumbers.contains(nextNumber)) {
+            nextNumber++
+        }
+        return nextNumber
+    }
+    
+    // 사용 가능한 최소 목적지 번호 찾기
+    private fun getNextAvailableDestinationNumber(): Int {
+        val usedNumbers = savedDestinations.mapNotNull { destination ->
+            // "target123" 형태에서 숫자 부분만 추출
+            val matchResult = Regex("target(\\d+)").find(destination.name)
+            matchResult?.groupValues?.get(1)?.toIntOrNull()
+        }.toSet()
+        
+        // 1부터 시작해서 사용되지 않은 첫 번째 번호 찾기
+        var nextNumber = 1
+        while (usedNumbers.contains(nextNumber)) {
+            nextNumber++
+        }
+        return nextNumber
+    }
+    
+    // 목적지 저장
+    private fun saveDestination(destination: Destination) {
+        val updatedDestinations = savedDestinations + destination
+        savedDestinations = updatedDestinations
+        saveDestinationsToSharedPrefs(updatedDestinations)
+        updateDestinationMarkers()
+        Log.d("[MainActivity]", "목적지 저장: ${destination.name}")
+    }
+    
+    // 목적지 삭제
+    private fun deleteDestination(destination: Destination) {
+        val updatedDestinations = savedDestinations.filter { it != destination }
+        savedDestinations = updatedDestinations
+        saveDestinationsToSharedPrefs(updatedDestinations)
+        updateDestinationMarkers()
+        Log.d("[MainActivity]", "목적지 삭제: ${destination.name}")
+    }
+    
+    // 목적지를 SharedPreferences에 저장
+    private fun saveDestinationsToSharedPrefs(destinations: List<Destination>) {
+        val prefs = getSharedPreferences("destinations", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        
+        val jsonArray = JSONArray()
+        destinations.forEach { destination ->
+            val jsonObject = JSONObject().apply {
+                put("name", destination.name)
+                put("latitude", destination.latitude)
+                put("longitude", destination.longitude)
+                put("timestamp", destination.timestamp)
+            }
+            jsonArray.put(jsonObject)
+        }
+        
+        editor.putString("destinations", jsonArray.toString())
+        editor.apply()
+    }
+    
+    // SharedPreferences에서 목적지 로드
+    private fun loadDestinationsFromSharedPrefs() {
+        val prefs = getSharedPreferences("destinations", Context.MODE_PRIVATE)
+        val destinationsJson = prefs.getString("destinations", null)
+        
+        if (destinationsJson != null) {
+            try {
+                val jsonArray = JSONArray(destinationsJson)
+                val destinations = mutableListOf<Destination>()
+                
+                for (i in 0 until jsonArray.length()) {
+                    val jsonObject = jsonArray.getJSONObject(i)
+                    val destination = Destination(
+                        name = jsonObject.getString("name"),
+                        latitude = jsonObject.getDouble("latitude"),
+                        longitude = jsonObject.getDouble("longitude"),
+                        timestamp = jsonObject.getLong("timestamp")
+                    )
+                    destinations.add(destination)
+                }
+                
+                savedDestinations = destinations
+                Log.d("[MainActivity]", "목적지 로드 완료: ${destinations.size}개")
+            } catch (e: Exception) {
+                Log.e("[MainActivity]", "목적지 로드 실패", e)
+            }
+        }
+    }
+    
+    // 목적지 마커 업데이트
+    private fun updateDestinationMarkers() {
+        mapLibreMap?.let { map ->
+            PMTilesLoader.addDestinationMarkers(map, savedDestinations)
+        }
+    }
+    
+    // 목적지 마커 클릭 처리
+    private fun handleDestinationClick(clickedLatLng: LatLng, screenPosition: android.graphics.PointF) {
+        Log.d("[MainActivity]", "목적지 클릭 처리 시작 - 저장된 목적지 수: ${savedDestinations.size}")
+        Log.d("[MainActivity]", "클릭 위치: ${clickedLatLng.latitude}, ${clickedLatLng.longitude}")
+        
+        if (savedDestinations.isEmpty()) {
+            Log.d("[MainActivity]", "저장된 목적지가 없음")
+            return
+        }
+        
+        mapLibreMap?.let { map ->
+            // 클릭된 위치에서 가장 가까운 목적지 찾기 (화면 거리 기준)
+            val closestDestination = savedDestinations.minByOrNull { destination ->
+                val targetLatLng = LatLng(destination.latitude, destination.longitude)
+                val screenDistance = calculateScreenDistance(clickedLatLng, targetLatLng, map)
+                screenDistance
+            }
+            
+            Log.d("[MainActivity]", "가장 가까운 목적지: ${closestDestination?.name}")
+            
+            // 100픽셀 이내의 목적지만 클릭으로 인식
+            if (closestDestination != null) {
+                val targetLatLng = LatLng(closestDestination.latitude, closestDestination.longitude)
+                val screenDistance = calculateScreenDistance(clickedLatLng, targetLatLng, map)
+                
+                Log.d("[MainActivity]", "화면 거리: ${screenDistance}픽셀")
+                
+                if (screenDistance <= 100) { // 100픽셀 이내
+                    clickedDestination = closestDestination
+                    popupPosition = screenPosition
+                    showDestinationPopup = true
+                    Log.d("[MainActivity]", "목적지 클릭 팝업 표시: ${closestDestination.name}")
+                } else {
+                    Log.d("[MainActivity]", "화면 거리가 너무 멀어서 클릭으로 인식하지 않음 (${screenDistance}픽셀)")
+                }
+            } else {
+                Log.d("[MainActivity]", "가장 가까운 목적지를 찾을 수 없음")
+            }
+        }
+    }
+    
+    // 두 지점 간의 거리 계산 (미터)
+    private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadius = 6371000.0 // 지구 반지름 (미터)
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        val distance = earthRadius * c
+        Log.d("[MainActivity]", "거리 계산: (${lat1}, ${lon1}) -> (${lat2}, ${lon2}) = ${distance}미터")
+        return distance
+    }
+    
+    // 화면 거리 계산 (픽셀)
+    private fun calculateScreenDistance(
+        clickLatLng: LatLng, 
+        targetLatLng: LatLng, 
+        map: MapLibreMap
+    ): Double {
+        val clickScreenPoint = map.projection.toScreenLocation(clickLatLng)
+        val targetScreenPoint = map.projection.toScreenLocation(targetLatLng)
+        
+        val dx = clickScreenPoint.x - targetScreenPoint.x
+        val dy = clickScreenPoint.y - targetScreenPoint.y
+        val screenDistance = Math.sqrt((dx * dx + dy * dy).toDouble())
+        
+        Log.d("[MainActivity]", "화면 거리 계산: ${screenDistance}픽셀")
+        return screenDistance
+    }
+    
+    // 지도 회전 제어 함수
+    private fun updateMapRotation() {
+        mapLibreMap?.let { map ->
+            when (mapDisplayMode) {
+                "노스업" -> {
+                    // 북쪽이 위쪽 (0도)
+                    val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                        .target(map.cameraPosition.target)
+                        .zoom(map.cameraPosition.zoom)
+                        .bearing(0.0)
+                        .build()
+                    map.cameraPosition = newPosition
+                    
+                    // 코스업 선 제거
+                    PMTilesLoader.removeCourseLine(map)
+                }
+                "헤딩업" -> {
+                    // 보트의 진행방향이 위쪽 (현재 bearing의 반대)
+                    val heading = locationManager?.getCurrentBearing() ?: 0f
+//                    Log.d("[MainActivity]", "헤딩업 지도 회전: 보트 방향 ${heading}도 -> 지도 bearing ${-heading}도")
+                    val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                        .target(map.cameraPosition.target)
+                        .zoom(map.cameraPosition.zoom)
+                        .bearing(heading.toDouble()) // bearing의 반대 방향으로 회전
+                        .build()
+                    map.cameraPosition = newPosition
+                    
+                    // 코스업 선 제거
+                    PMTilesLoader.removeCourseLine(map)
+                }
+                "코스업" -> {
+                    // 목적지 방향이 위쪽
+                    courseDestination?.let { destination ->
+                        val currentLocation = locationManager?.getCurrentLocationObject()
+                        if (currentLocation != null) {
+                            val bearing = calculateBearing(
+                                currentLocation.latitude, currentLocation.longitude,
+                                destination.latitude, destination.longitude
+                            )
+                            val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                                .target(map.cameraPosition.target)
+                                .zoom(map.cameraPosition.zoom)
+                                .bearing(bearing.toDouble())
+                                .build()
+                            map.cameraPosition = newPosition
+                            
+                            // 코스업 선 그리기
+                            val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
+                            PMTilesLoader.addCourseLine(map, currentLatLng, destination)
+                        }
+                    }
+                }
+                else -> {
+                    // 기본값: 노스업
+                    val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                        .target(map.cameraPosition.target)
+                        .zoom(map.cameraPosition.zoom)
+                        .bearing(0.0)
+                        .build()
+                    map.cameraPosition = newPosition
+                    
+                    // 코스업 선 제거
+                    PMTilesLoader.removeCourseLine(map)
+                }
+            }
+        }
+    }
+    
+    // 두 지점 간의 bearing 계산
+    private fun calculateBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val lat1Rad = Math.toRadians(lat1)
+        val lat2Rad = Math.toRadians(lat2)
+        val deltaLonRad = Math.toRadians(lon2 - lon1)
+        
+        val y = Math.sin(deltaLonRad) * Math.cos(lat2Rad)
+        val x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(deltaLonRad)
+        
+        val bearingRad = Math.atan2(y, x)
+        val bearingDeg = Math.toDegrees(bearingRad)
+        
+        return (((bearingDeg % 360) + 360) % 360).toFloat()
+    }
 
     // 위치 권한 요청 런처
     private val locationPermissionRequest = registerForActivityResult(
@@ -134,12 +445,12 @@ class MainActivity : ComponentActivity() {
             permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
                 // 정확한 위치 권한이 허용됨
                 locationManager?.startLocationUpdates()
-                locationManager?.startAutoTracking()
+                Log.d("[MainActivity]", "정확한 위치 권한 허용 - 첫 번째 위치에서 자동 이동")
             }
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
                 // 대략적인 위치 권한이 허용됨
                 locationManager?.startLocationUpdates()
-                locationManager?.startAutoTracking()
+                Log.d("[MainActivity]", "대략적인 위치 권한 허용 - 첫 번째 위치에서 자동 이동")
             }
             else -> {
                 // 위치 권한이 거부됨
@@ -157,7 +468,12 @@ class MainActivity : ComponentActivity() {
         
         // 저장된 포인트들 로드
         val savedPoints = loadPointsFromLocal()
+        pointCount = savedPoints.size
         android.util.Log.d("[MainActivity]", "저장된 포인트 ${savedPoints.size}개 로드 완료")
+        
+        // 저장된 목적지들 로드
+        loadDestinationsFromSharedPrefs()
+        Log.d("[MainActivity]", "저장된 목적지 ${savedDestinations.size}개 로드 완료")
 
         // MapLibre 초기화
         MapLibre.getInstance(this)
@@ -165,6 +481,17 @@ class MainActivity : ComponentActivity() {
         @OptIn(ExperimentalMaterial3Api::class)
         setContent {
             ChartPlotterTheme {
+                // 지도 표시 모드 변경 시 회전 업데이트
+                LaunchedEffect(mapDisplayMode) {
+                    updateMapRotation()
+                }
+                
+                // 코스업 모드에서 목적지 변경 시 회전 업데이트
+                LaunchedEffect(courseDestination) {
+                    if (mapDisplayMode == "코스업") {
+                        updateMapRotation()
+                    }
+                }
                 // 포인트 등록 다이얼로그 표시
                 if (showDialog) {
                     PointRegistrationDialog(
@@ -173,6 +500,9 @@ class MainActivity : ComponentActivity() {
                         onPointNameChange = { pointName = it },
                         selectedColor = selectedColor,
                         onColorChange = { selectedColor = it },
+                        selectedIconType = selectedIconType,
+                        onIconTypeChange = { selectedIconType = it },
+                        getNextAvailablePointNumber = { getNextAvailablePointNumber() },
                         onRegister = { registerPoint() },
                         onDismiss = { showDialog = false }
                     )
@@ -213,21 +543,335 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 
+                // 목적지 설정 다이얼로그 표시
+                if (showDestinationDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDestinationDialog = false },
+                        title = { Text("목적지 설정") },
+                        text = {
+                            Column {
+                                Text("목적지 좌표를 입력하세요:")
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                TextField(
+                                    value = destinationLatitude,
+                                    onValueChange = { destinationLatitude = it },
+                                    label = { Text("위도") },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                TextField(
+                                    value = destinationLongitude,
+                                    onValueChange = { destinationLongitude = it },
+                                    label = { Text("경도") },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                Text(
+                                    "현재 위치를 목적지로 설정",
+                                    modifier = Modifier
+                                        .clickable {
+                                            val currentLocation = locationManager?.getCurrentLocationObject()
+                                            if (currentLocation != null) {
+                                                destinationLatitude = currentLocation.latitude.toString()
+                                                destinationLongitude = currentLocation.longitude.toString()
+                                            }
+                                        }
+                                        .padding(8.dp),
+                                    color = Color.Blue
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    try {
+                                        val lat = destinationLatitude.toDouble()
+                                        val lng = destinationLongitude.toDouble()
+                                        courseDestination = LatLng(lat, lng)
+                                        showDestinationDialog = false
+                                        Log.d("[MainActivity]", "목적지 설정: $lat, $lng")
+                                    } catch (e: NumberFormatException) {
+                                        Log.e("[MainActivity]", "잘못된 좌표 형식")
+                                    }
+                                }
+                            ) {
+                                Text("설정")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDestinationDialog = false }) {
+                                Text("취소")
+                            }
+                        }
+                    )
+                }
+                
+                
+                // 목적지 생성 다이얼로그
+                if (showDestinationCreateDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDestinationCreateDialog = false },
+                        title = { Text("목적지 생성") },
+                        text = {
+                            Column {
+                                if (showCursor && cursorLatLng != null) {
+                                    Text("커서 위치에 목적지를 생성합니다:")
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    Text(
+                                        "위치: ${String.format("%.6f", cursorLatLng!!.latitude)}, ${String.format("%.6f", cursorLatLng!!.longitude)}",
+                                        color = Color.Gray,
+                                        fontSize = 12.sp
+                                    )
+                                    
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    TextField(
+                                        value = destinationName,
+                                        onValueChange = { destinationName = it },
+                                        label = { Text("목적지 이름 (선택사항)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        placeholder = { Text("target${String.format("%03d", getNextAvailableDestinationNumber())}") }
+                                    )
+                                } else {
+                                    Text("목적지 정보를 입력하세요:")
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    TextField(
+                                        value = destinationName,
+                                        onValueChange = { destinationName = it },
+                                        label = { Text("목적지 이름") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    TextField(
+                                        value = destinationLatitude,
+                                        onValueChange = { destinationLatitude = it },
+                                        label = { Text("위도") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    TextField(
+                                        value = destinationLongitude,
+                                        onValueChange = { destinationLongitude = it },
+                                        label = { Text("경도") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    Text(
+                                        "현재 위치를 목적지로 설정",
+                                        modifier = Modifier
+                                            .clickable {
+                                                val currentLocation = locationManager?.getCurrentLocationObject()
+                                                if (currentLocation != null) {
+                                                    destinationLatitude = currentLocation.latitude.toString()
+                                                    destinationLongitude = currentLocation.longitude.toString()
+                                                }
+                                            }
+                                            .padding(8.dp),
+                                        color = Color.Blue
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    try {
+                                        val lat: Double
+                                        val lng: Double
+                                        
+                                        if (showCursor && cursorLatLng != null) {
+                                            // 커서 위치 사용
+                                            lat = cursorLatLng!!.latitude
+                                            lng = cursorLatLng!!.longitude
+                                        } else {
+                                            // 수동 입력 사용
+                                            lat = destinationLatitude.toDouble()
+                                            lng = destinationLongitude.toDouble()
+                                        }
+                                        
+                                        // 이름 자동 생성 (target001, target002...)
+                                        val name = if (destinationName.isNotEmpty()) {
+                                            destinationName
+                                        } else {
+                                            "target${String.format("%03d", getNextAvailableDestinationNumber())}"
+                                        }
+                                        
+                                        val destination = Destination(name, lat, lng)
+                                        saveDestination(destination)
+                                        
+                                        // 입력 필드 초기화
+                                        destinationName = ""
+                                        destinationLatitude = ""
+                                        destinationLongitude = ""
+                                        
+                                        showDestinationCreateDialog = false
+                                    } catch (e: NumberFormatException) {
+                                        Log.e("[MainActivity]", "잘못된 좌표 형식")
+                                    }
+                                }
+                            ) {
+                                Text("생성")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDestinationCreateDialog = false }) {
+                                Text("취소")
+                            }
+                        }
+                    )
+                }
+                
+                // 목적지 클릭 팝업 - AlertDialog 버전
+                if (showDestinationPopup && clickedDestination != null) {
+                    Log.d("[MainActivity]", "목적지 팝업 표시 중: ${clickedDestination!!.name}")
+                    
+                    AlertDialog(
+                        onDismissRequest = {
+                            showDestinationPopup = false
+                            clickedDestination = null
+                            popupPosition = null
+                        },
+                        title = { Text("목적지") },
+                        text = { Text("${clickedDestination!!.name}") },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showDestinationPopup = false
+                                    clickedDestination = null
+                                    popupPosition = null
+                                }
+                            ) {
+                                Text("확인")
+                            }
+                        }
+                    )
+                }
+                
+                // 목적지 관리 다이얼로그
+                if (showDestinationManageDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDestinationManageDialog = false },
+                        title = { Text("목적지 목록") },
+                        text = {
+                            Column(
+                                modifier = Modifier.height(400.dp)
+                            ) {
+                                Text("저장된 목적지 목록:")
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                LazyColumn {
+                                    items(savedDestinations) { destination ->
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = Color.LightGray
+                                            )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Text(
+                                                        text = destination.name,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.Black
+                                                    )
+                                                    Text(
+                                                        text = "위도: ${String.format("%.6f", destination.latitude)}",
+                                                        fontSize = 12.sp,
+                                                        color = Color.Gray
+                                                    )
+                                                    Text(
+                                                        text = "경도: ${String.format("%.6f", destination.longitude)}",
+                                                        fontSize = 12.sp,
+                                                        color = Color.Gray
+                                                    )
+                                                }
+                                                
+                                                Row {
+                                                    Button(
+                                                        onClick = {
+                                                            courseDestination = LatLng(destination.latitude, destination.longitude)
+                                                            showDestinationManageDialog = false
+                                                            Log.d("[MainActivity]", "목적지 선택: ${destination.name}")
+                                                        },
+                                                        modifier = Modifier.padding(4.dp)
+                                                    ) {
+                                                        Text("선택", fontSize = 10.sp)
+                                                    }
+                                                    
+                                                    Button(
+                                                        onClick = {
+                                                            deleteDestination(destination)
+                                                        },
+                                                        modifier = Modifier.padding(4.dp),
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color.Red
+                                                        )
+                                                    ) {
+                                                        Text("삭제", fontSize = 10.sp)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = { showDestinationManageDialog = false }
+                            ) {
+                                Text("닫기")
+                            }
+                        }
+                    )
+                }
+                
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
+                    floatingActionButtonPosition = FabPosition.End,
                     floatingActionButton = {
-                        // 현재 위치 버튼 (우측 하단)
-                        FloatingActionButton(
+                        // 메뉴창이 열려있을 때는 플로팅 버튼 숨김
+                        if (!showMenu) {
+                            // 현재 위치 버튼 (우측 하단)
+                            FloatingActionButton(
                             onClick = {
                                 locationManager?.startAutoTracking()
+                                // 현재 위치로 이동할 때 커서 숨김
+                                showCursor = false
+                                cursorLatLng = null
+                                cursorScreenPosition = null
                             },
                             modifier = Modifier.size(56.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_ship),
+                                imageVector = Icons.Default.LocationOn,
                                 contentDescription = "내 위치로 이동",
                                 modifier = Modifier.size(24.dp)
                             )
+                        }
                         }
                     }
                 ) { innerPadding ->
@@ -238,19 +882,72 @@ class MainActivity : ComponentActivity() {
                         onMapReady = { map ->
 
                             map.uiSettings.apply {
-                                isCompassEnabled = true
-                                // 좌측 상단으로 배치
-                                compassGravity = Gravity.TOP or Gravity.START   // (또는 Gravity.TOP or Gravity.LEFT)
-                                // 마진(좌, 상, 우, 하). 16dp 권장
-                                setCompassMargins(this@MainActivity.dp(16), this@MainActivity.dp(16), 0, 0)
-
-                                // 옵션: 북쪽 정면일 때도 나침반 표시 유지하고 싶으면
-                                // isCompassFadeWhenFacingNorth = false
+                                isCompassEnabled = false  // 나침반 완전히 숨김
                             }
 
+                            /* ✅ 줌 제한 */
+                            map.setMinZoomPreference(6.0)     // 최소 z=4
+                            map.setMaxZoomPreference(22.0)    // (원하시면 더 키우거나 줄이기)
+                            
+                            /* ✅ 터치 관련 UI 설정 - 지도 이동 허용, 회전만 비활성화 */
+                            map.uiSettings.isScrollGesturesEnabled = true
+                            map.uiSettings.isZoomGesturesEnabled = true
+                            map.uiSettings.isTiltGesturesEnabled = false
+                            map.uiSettings.isDoubleTapGesturesEnabled = true
+                            map.uiSettings.isQuickZoomGesturesEnabled = true
+                            map.uiSettings.isRotateGesturesEnabled = false
+                            
+                            /* ✅ Attribution과 Logo 숨기기 - 지도 이동 후 나타나는 원 제거 */
+                            map.uiSettings.isAttributionEnabled = false
+                            map.uiSettings.isLogoEnabled = false
+                            
+                            // 목적지 마커 추가 (지도 스타일 로드 완료 후)
+                            map.getStyle { style ->
+                                // 약간의 지연을 두고 마커 추가 (스타일 완전 로드 대기)
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    updateDestinationMarkers()
+                                }, 500) // 0.5초 지연
+                            }
+
+                            /* ✅ 카메라 타겟 범위 제한: 한·중·일 대략 커버 */
+                            val regionBounds = LatLngBounds.Builder()
+                                // NE, SW 2점만으로 범위 구성
+                                .include(LatLng(42.0, 150.0))  // 북동 (대략 일본 북부~쿠릴 열도 부근까지)
+                                .include(LatLng(24.0, 120.0))   // 남서 (중국 남부~베트남 북부 위도까지)
+                                .build()
+
+                            map.setLatLngBoundsForCameraTarget(regionBounds)
                             if (!isMapInitialized) {
                                 mapLibreMap = map
-                                locationManager = LocationManager(this@MainActivity, map)
+                                locationManager = LocationManager(
+                                    this@MainActivity, 
+                                    map,
+                                    onGpsLocationUpdate = { lat, lng, available ->
+                                        currentGpsLatitude = lat
+                                        currentGpsLongitude = lng
+                                        isGpsAvailable = available
+                                        
+                                        // 코스업 모드에서 위치 변경 시 선 업데이트
+                                        if (mapDisplayMode == "코스업" && courseDestination != null) {
+                                            val currentLocation = locationManager?.getCurrentLocationObject()
+                                            if (currentLocation != null) {
+                                                val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
+                                                PMTilesLoader.addCourseLine(map, currentLatLng, courseDestination!!)
+                                            }
+                                        }
+                                    },
+                                    onBearingUpdate = { bearing ->
+                                        // COG 정보 업데이트
+                                        currentShipCog = bearing
+                                        // 헤딩업 모드일 때만 지도 회전 업데이트
+                                        if (mapDisplayMode == "헤딩업") {
+//                                            Log.d("[MainActivity]", "헤딩업 모드: 보트 방향 ${bearing}도로 지도 회전")
+                                            updateMapRotation()
+                                        } else {
+//                                            Log.v("[MainActivity]", "보트 방향 ${bearing}도 감지됨 (현재 모드: ${mapDisplayMode})")
+                                        }
+                                    }
+                                )
 
                                 // 센서 초기화
                                 locationManager?.initializeSensors()
@@ -265,12 +962,13 @@ class MainActivity : ComponentActivity() {
                                     locationManager?.updatePointsOnMap(savedPoints)
                                 }
 
-                                // 지도 터치/드래그 감지하여 자동 추적 중지
+                                // 지도 터치/드래그 감지하여 자동 추적 중지 (수동 회전은 비활성화)
                                 map.addOnCameraMoveListener {
                                     locationManager?.stopAutoTracking()
+                                    // 수동 회전은 비활성화 - 지도 표시 모드에 따라 자동 회전만 허용
                                 }
                                 
-                                // 지도 클릭 이벤트 처리 (포인트 마커 클릭 감지)
+                                // 지도 클릭 이벤트 처리 (포인트 마커 클릭 감지 + 터치 위치에 커서 표시)
                                 map.addOnMapClickListener { latLng ->
                                     // 클릭된 위치에서 포인트 레이어의 피처들을 쿼리
                                     val screenPoint = map.projection.toScreenLocation(latLng)
@@ -278,6 +976,11 @@ class MainActivity : ComponentActivity() {
                                         android.graphics.PointF(screenPoint.x, screenPoint.y),
                                         "points-symbol"
                                     )
+                                    
+                                    // 항상 터치한 위치에 커서 표시
+                                    cursorLatLng = latLng
+                                    cursorScreenPosition = screenPoint
+                                    showCursor = true
                                     
                                     if (features.isNotEmpty()) {
                                         // 포인트가 클릭되었음
@@ -298,8 +1001,12 @@ class MainActivity : ComponentActivity() {
                                             showPointManageDialog = true
                                         }
                                         
+                                        Log.d("[MainActivity]", "포인트 클릭 + 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
+                                        
                                         true // 기본 지도 클릭 이벤트 방지
                                     } else {
+                                        Log.d("[MainActivity]", "터치 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
+                                        
                                         false // 기본 지도 클릭 이벤트 허용
                                     }
                                 }
@@ -312,8 +1019,8 @@ class MainActivity : ComponentActivity() {
                                     ) == PackageManager.PERMISSION_GRANTED
                                 ) {
                                     locationManager?.startLocationUpdates()
-                                    // 처음 시작 시 자동 추적 활성화
-                                    locationManager?.startAutoTracking()
+                                    // 첫 번째 위치 정보를 받으면 자동으로 그 위치로 이동 (onLocationChanged에서 처리)
+                                    Log.d("[MainActivity]", "위치 추적 시작 - 첫 번째 위치에서 자동 이동")
                                 } else {
                                     locationPermissionRequest.launch(
                                         arrayOf(
@@ -326,41 +1033,207 @@ class MainActivity : ComponentActivity() {
                                 isMapInitialized = true
                             }
                         },
-                        isDialogShown = showDialog // ⬅ 전달
+                        isDialogShown = showDialog, // ⬅ 전달
+                        showCursor = showCursor,
+                        cursorLatLng = cursorLatLng,
+                        cursorScreenPosition = cursorScreenPosition,
+                        onTouchEnd = { latLng, screenPoint ->
+                            Log.d("[MainActivity]", "터치 이벤트 발생: ${latLng.latitude}, ${latLng.longitude}")
+                            // 목적지 클릭 확인
+                            handleDestinationClick(latLng, screenPoint)
+                            
+                            // 터치 종료 시 커서 표시
+                            cursorLatLng = latLng
+                            cursorScreenPosition = screenPoint
+                            showCursor = true
+                        },
+                        onTouchStart = {
+                            // 터치 시작 시 커서 숨김
+                            showCursor = false
+                        }
                     )
                     
                     // 우측 상단 메뉴 버튼
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(16.dp)
-                            .statusBarsPadding(),
+                            .statusBarsPadding()
+                            .padding(top = 24.dp, end = 16.dp, start = 16.dp, bottom = 16.dp),
                         contentAlignment = Alignment.TopEnd
                     ) {
-                        FloatingActionButton(
-                            onClick = { showMenu = !showMenu },
-                            shape = RoundedCornerShape(16.dp),
-                            containerColor = Color(0xC6E2E2E2),
-                            contentColor = Color.Black,
-                            elevation = FloatingActionButtonDefaults.elevation(
-                                defaultElevation = 0.dp,                   // ✅ 내부가 밝아 보이는 효과 최소화
-                                pressedElevation = 0.dp,
-                                focusedElevation = 0.dp,
-                                hoveredElevation = 0.dp
-                            ),
-                            modifier = Modifier
-                                .size(48.dp)
-//                                    .clip(CircleShape)
-                                .border(
-                                    width = 1.dp,
-                                    color = Color.White,
-                                    shape =  RoundedCornerShape(16.dp)
-                                ),
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Menu,
-                                contentDescription = "메뉴"
-                            )
+                            // 포인트 생성 버튼 (커서가 표시될 때만 보임)
+                            if (showCursor) {
+                                FloatingActionButton(
+                                    onClick = { createQuickPoint() },
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = Color(0xC6FF6B6B),
+                                    contentColor = Color.White,
+                                    elevation = FloatingActionButtonDefaults.elevation(
+                                        defaultElevation = 0.dp,
+                                        pressedElevation = 0.dp,
+                                        focusedElevation = 0.dp,
+                                        hoveredElevation = 0.dp
+                                    ),
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .border(
+                                            width = 1.dp,
+                                            color = Color.White,
+                                            shape = RoundedCornerShape(16.dp)
+                                        ),
+                                ) {
+                                    Text(
+                                        text = "+",
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            
+                            // 메뉴 버튼
+                            FloatingActionButton(
+                                onClick = { showMenu = !showMenu },
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = Color(0xC6E2E2E2),
+                                contentColor = Color.Black,
+                                elevation = FloatingActionButtonDefaults.elevation(
+                                    defaultElevation = 0.dp,                   // ✅ 내부가 밝아 보이는 효과 최소화
+                                    pressedElevation = 0.dp,
+                                    focusedElevation = 0.dp,
+                                    hoveredElevation = 0.dp
+                                ),
+                                modifier = Modifier
+                                    .size(48.dp)
+//                                    .clip(CircleShape)
+                                    .border(
+                                        width = 1.dp,
+                                        color = Color.White,
+                                        shape =  RoundedCornerShape(16.dp)
+                                    ),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "메뉴"
+                                )
+                            }
+                        }
+                    }
+                    
+                    // 아이콘 선택 UI (커서가 표시될 때만 보임, 지도 좌측 상단)
+                    if (showCursor) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .statusBarsPadding()
+                                .padding(top = 24.dp, end = 16.dp, start = 16.dp, bottom = 16.dp),
+                            contentAlignment = Alignment.TopStart
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // 이전 아이콘 버튼 (<)
+                                FloatingActionButton(
+                                    onClick = { 
+                                        selectedIconType = when (selectedIconType) {
+                                            "circle" -> "square"
+                                            "triangle" -> "circle"
+                                            "square" -> "triangle"
+                                            else -> "circle"
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    containerColor = Color(0xC6E2E2E2),
+                                    contentColor = Color.Red,
+                                    elevation = FloatingActionButtonDefaults.elevation(
+                                        defaultElevation = 0.dp,
+                                        pressedElevation = 0.dp,
+                                        focusedElevation = 0.dp,
+                                        hoveredElevation = 0.dp
+                                    ),
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .border(
+                                            width = 1.dp,
+                                            color = Color.White,
+                                            shape = RoundedCornerShape(8.dp)
+                                        ),
+                                ) {
+                                    Text(
+                                        text = "<",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                
+                                // 현재 선택된 아이콘 표시
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    when (selectedIconType) {
+                                        "circle" -> {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .background(Color.Black, CircleShape)
+                                            )
+                                        }
+                                        "triangle" -> {
+                                            Text(
+                                                text = "▲",
+                                                fontSize = 16.sp,
+                                                color = Color.Black
+                                            )
+                                        }
+                                        "square" -> {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .background(Color.Black, RoundedCornerShape(2.dp))
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                // 다음 아이콘 버튼 (>)
+                                FloatingActionButton(
+                                    onClick = { 
+                                        selectedIconType = when (selectedIconType) {
+                                            "circle" -> "triangle"
+                                            "triangle" -> "square"
+                                            "square" -> "circle"
+                                            else -> "circle"
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    containerColor = Color(0xC6E2E2E2),
+                                    contentColor = Color.Black,
+                                    elevation = FloatingActionButtonDefaults.elevation(
+                                        defaultElevation = 0.dp,
+                                        pressedElevation = 0.dp,
+                                        focusedElevation = 0.dp,
+                                        hoveredElevation = 0.dp
+                                    ),
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .border(
+                                            width = 1.dp,
+                                            color = Color.White,
+                                            shape = RoundedCornerShape(8.dp)
+                                        ),
+                                ) {
+                                    Text(
+                                        text = ">",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                     
@@ -369,6 +1242,7 @@ class MainActivity : ComponentActivity() {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
+                                .statusBarsPadding()
                                 .padding(16.dp),
                             contentAlignment = Alignment.CenterEnd
                         ) {
@@ -376,8 +1250,11 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier
                                     .width(250.dp)
                                     .fillMaxHeight()
-                                    .background(Color.DarkGray.copy(alpha = 0.8f))
+                                    .background(Color.DarkGray)
                                     .padding(16.dp)
+                                    .pointerInput(Unit) {
+                                        detectTapGestures { /* 메뉴창 내부 클릭 시 지도 클릭 이벤트 차단 */ }
+                                    }
                             ) {
                                 Column {
                                     // 메뉴 헤더 (제목 + 닫기/뒤로가기 버튼)
@@ -401,6 +1278,8 @@ class MainActivity : ComponentActivity() {
                                             onClick = { 
                                                 if (currentMenu == "main") {
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                 } else {
                                                     currentMenu = "main"
                                                 }
@@ -420,6 +1299,8 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "포인트", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     currentMenu = "point"
@@ -430,6 +1311,8 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "AIS", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     currentMenu = "ais"
@@ -438,11 +1321,38 @@ class MainActivity : ComponentActivity() {
                                         )
                                         
                                         Text(
+                                            "화면표시 방법설정", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = "display"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "목적지 관리", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = "destination"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
                                             "설정", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     // TODO: 설정 화면 구현
                                                 },
                                             color = Color.White
@@ -451,9 +1361,12 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "정보", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     // TODO: 정보 화면 구현
                                                 },
                                             color = Color.White
@@ -465,19 +1378,27 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "포인트 생성", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
-                                                    // 현재 화면 중앙 좌표 가져오기
-                                                    mapLibreMap?.cameraPosition?.target?.let { latLng ->
+                                                    // 커서 위치가 있으면 커서 위치 사용, 없으면 화면 중앙 좌표 사용
+                                                    val targetLatLng = if (showCursor && cursorLatLng != null) {
+                                                        cursorLatLng
+                                                    } else {
+                                                        mapLibreMap?.cameraPosition?.target
+                                                    }
+                                                    
+                                                    targetLatLng?.let { latLng ->
                                                         currentLatLng = latLng
                                                         centerCoordinates = "위도: ${String.format("%.6f", latLng.latitude)}\n경도: ${String.format("%.6f", latLng.longitude)}"
-                                                        pointName = "" // 포인트명 초기화
+                                                        pointName = "Point${getNextAvailablePointNumber()}" // 자동 포인트명 생성
                                                         selectedColor = Color.Red // 색상 초기화
                                                     } ?: run {
                                                         centerCoordinates = "좌표를 가져올 수 없습니다."
                                                         currentLatLng = null
                                                     }
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     showDialog = true
                                                 },
                                             color = Color.White
@@ -486,9 +1407,11 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "포인트 삭제", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     showPointDeleteList = true
                                                 },
                                             color = Color.White
@@ -497,9 +1420,11 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "포인트 변경", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     // TODO: 포인트 변경 화면 구현
                                                 },
                                             color = Color.White
@@ -511,9 +1436,11 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "AIS ON/OFF", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     // TODO: AIS ON/OFF 구현
                                                 },
                                             color = Color.White
@@ -522,10 +1449,123 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             "AIS 설정", 
                                             modifier = Modifier
+                                                .fillMaxWidth()
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
                                                     // TODO: AIS 설정 화면 구현
+                                                },
+                                            color = Color.White
+                                        )
+                                    }
+                                    
+                                    // 화면표시 방법설정 메뉴
+                                    if (currentMenu == "display") {
+                                        Text(
+                                            "노스업", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    Log.d("[MainActivity]", "지도 표시 모드 변경: ${mapDisplayMode} -> 노스업")
+                                                    mapDisplayMode = "노스업"
+                                                    showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                },
+                                            color = if (mapDisplayMode == "노스업") Color.Yellow else Color.White
+                                        )
+                                        
+                                        Text(
+                                            "헤딩업", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    Log.d("[MainActivity]", "지도 표시 모드 변경: ${mapDisplayMode} -> 헤딩업")
+                                                    mapDisplayMode = "헤딩업"
+                                                    showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                },
+                                            color = if (mapDisplayMode == "헤딩업") Color.Yellow else Color.White
+                                        )
+                                        
+                                        Text(
+                                            "코스업", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    Log.d("[MainActivity]", "지도 표시 모드 변경: ${mapDisplayMode} -> 코스업")
+                                                    mapDisplayMode = "코스업"
+                                                    if (savedDestinations.isNotEmpty()) {
+                                                        showDestinationManageDialog = true
+                                                    } else {
+                                                        showDestinationCreateDialog = true
+                                                    }
+                                                    showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                },
+                                            color = if (mapDisplayMode == "코스업") Color.Yellow else Color.White
+                                        )
+                                        
+                                        if (mapDisplayMode == "코스업") {
+                                            Text(
+                                                "목적지 변경", 
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                    .clickable { 
+                                                        showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                        if (savedDestinations.isNotEmpty()) {
+                                                            showDestinationManageDialog = true
+                                                        } else {
+                                                            showDestinationCreateDialog = true
+                                                        }
+                                                    },
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                    
+                                    // 목적지 관리 메뉴
+                                    if (currentMenu == "destination") {
+                                        Text(
+                                            "목적지 생성", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                    // 기본값 미리 설정
+                                                    destinationName = "target${String.format("%03d", getNextAvailableDestinationNumber())}"
+                                                    showDestinationCreateDialog = true
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "목적지 목록", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showMenu = false
+                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
+                                                    showDestinationManageDialog = true
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "뒤로", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = ""
                                                 },
                                             color = Color.White
                                         )
@@ -539,7 +1579,8 @@ class MainActivity : ComponentActivity() {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(32.dp),
+                            .navigationBarsPadding()
+                            .padding(16.dp),
                         contentAlignment = Alignment.BottomCenter
                     ) {
                         Row(
@@ -550,9 +1591,34 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     mapLibreMap?.let { map ->
                                         val currentZoom = map.cameraPosition.zoom
-                                        val newZoom = (currentZoom - 1.0).coerceAtLeast(0.0)
-                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
-                                        map.animateCamera(cameraUpdate, 300)
+                                        val newZoom = (currentZoom - 0.5).coerceAtLeast(0.0)
+                                        
+                                        // 커서가 있으면 3단계 처리
+                                        if (showCursor && cursorLatLng != null) {
+                                            // 1단계: 커서를 맵 중앙에 위치 (화면 중앙으로 이동)
+                                            val centerLatLng = map.cameraPosition.target
+                                            if (centerLatLng != null) {
+                                                val centerScreenPoint = map.projection.toScreenLocation(centerLatLng)
+                                                cursorScreenPosition = centerScreenPoint
+                                                Log.d("[MainActivity]", "줌 아웃 - 1단계: 커서를 맵 중앙에 위치")
+                                            }
+                                            
+                                            // 2단계: 이동하기 전 커서 위치로 지도 중앙 맞춤
+                                            val originalCursorLatLng = cursorLatLng!!
+                                            val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                                                org.maplibre.android.camera.CameraPosition.Builder()
+                                                    .target(originalCursorLatLng)
+                                                    .zoom(newZoom)
+                                                    .build()
+                                            )
+                                            map.animateCamera(cameraUpdate, 300)
+                                            
+                                            Log.d("[MainActivity]", "줌 아웃 - 2단계: 원래 커서 위치로 지도 중앙 맞춤 + 3단계: 줌 아웃 처리")
+                                        } else {
+                                            // 커서가 없으면 일반 줌 아웃
+                                            val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                                            map.animateCamera(cameraUpdate, 300)
+                                        }
                                         Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
                                     }
                                 },
@@ -586,9 +1652,34 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     mapLibreMap?.let { map ->
                                         val currentZoom = map.cameraPosition.zoom
-                                        val newZoom = (currentZoom + 1.0).coerceAtMost(20.0)
-                                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
-                                        map.animateCamera(cameraUpdate, 300)
+                                        val newZoom = (currentZoom + 0.5).coerceAtMost(20.0)
+                                        
+                                        // 커서가 있으면 3단계 처리
+                                        if (showCursor && cursorLatLng != null) {
+                                            // 1단계: 커서를 맵 중앙에 위치 (화면 중앙으로 이동)
+                                            val centerLatLng = map.cameraPosition.target
+                                            if (centerLatLng != null) {
+                                                val centerScreenPoint = map.projection.toScreenLocation(centerLatLng)
+                                                cursorScreenPosition = centerScreenPoint
+                                                Log.d("[MainActivity]", "줌 인 - 1단계: 커서를 맵 중앙에 위치")
+                                            }
+                                            
+                                            // 2단계: 이동하기 전 커서 위치로 지도 중앙 맞춤
+                                            val originalCursorLatLng = cursorLatLng!!
+                                            val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                                                org.maplibre.android.camera.CameraPosition.Builder()
+                                                    .target(originalCursorLatLng)
+                                                    .zoom(newZoom)
+                                                    .build()
+                                            )
+                                            map.animateCamera(cameraUpdate, 300)
+                                            
+                                            Log.d("[MainActivity]", "줌 인 - 2단계: 원래 커서 위치로 지도 중앙 맞춤 + 3단계: 줌 인 처리")
+                                        } else {
+                                            // 커서가 없으면 일반 줌 인
+                                            val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                                            map.animateCamera(cameraUpdate, 300)
+                                        }
                                         Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
                                     }
                                 },
@@ -618,6 +1709,79 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                    
+                    // GPS 좌표와 지도 모드 통합 표시 (좌측하단)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .navigationBarsPadding()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.BottomStart
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    Color.DarkGray.copy(alpha = 0.7f),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                // GPS 좌표
+                                Text(
+                                    text = "GPS 좌표",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (isGpsAvailable) {
+                                    Text(
+                                        text = "위도: ${String.format("%.6f", currentGpsLatitude)}",
+                                        color = Color.White,
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        text = "경도: ${String.format("%.6f", currentGpsLongitude)}",
+                                        color = Color.White,
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        text = "COG: ${String.format("%.1f", currentShipCog)}°",
+                                        color = Color.White,
+                                        fontSize = 11.sp
+                                    )
+                                } else {
+                                    Text(
+                                        text = "GPS 신호 없음",
+                                        color = Color.White,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                // 지도 표시 모드
+                                Text(
+                                    text = "지도 모드",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = mapDisplayMode,
+                                    color = Color.Yellow,
+                                    fontSize = 11.sp
+                                )
+                                if (mapDisplayMode == "코스업" && courseDestination != null) {
+                                    Text(
+                                        text = "목적지 설정됨",
+                                        color = Color.Green,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -643,10 +1807,35 @@ class MainActivity : ComponentActivity() {
                 // 줌 아웃
                 mapLibreMap?.let { map ->
                     val currentZoom = map.cameraPosition.zoom
-                    val newZoom = (currentZoom - 1.0).coerceAtLeast(0.0)
-                    val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
-                    map.animateCamera(cameraUpdate, 300)
-                    android.util.Log.d("[MainActivity]", "줌 아웃: $currentZoom -> $newZoom")
+                    val newZoom = (currentZoom - 0.5).coerceAtMost(20.0)
+
+                    // 커서가 있으면 3단계 처리
+                    if (showCursor && cursorLatLng != null) {
+                        // 1단계: 커서를 맵 중앙에 위치 (화면 중앙으로 이동)
+                        val centerLatLng = map.cameraPosition.target
+                        if (centerLatLng != null) {
+                            val centerScreenPoint = map.projection.toScreenLocation(centerLatLng)
+                            cursorScreenPosition = centerScreenPoint
+                            Log.d("[MainActivity]", "줌 인 - 1단계: 커서를 맵 중앙에 위치")
+                        }
+
+                        // 2단계: 이동하기 전 커서 위치로 지도 중앙 맞춤
+                        val originalCursorLatLng = cursorLatLng!!
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                            org.maplibre.android.camera.CameraPosition.Builder()
+                                .target(originalCursorLatLng)
+                                .zoom(newZoom)
+                                .build()
+                        )
+                        map.animateCamera(cameraUpdate, 300)
+
+                        Log.d("[MainActivity]", "줌 인 - 2단계: 원래 커서 위치로 지도 중앙 맞춤 + 3단계: 줌 인 처리")
+                    } else {
+                        // 커서가 없으면 일반 줌 인
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                        map.animateCamera(cameraUpdate, 300)
+                    }
+                    Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
                 }
                 return true
             }
@@ -654,10 +1843,35 @@ class MainActivity : ComponentActivity() {
                 // 줌 인
                 mapLibreMap?.let { map ->
                     val currentZoom = map.cameraPosition.zoom
-                    val newZoom = (currentZoom + 1.0).coerceAtMost(20.0)
-                    val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
-                    map.animateCamera(cameraUpdate, 300)
-                    android.util.Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
+                    val newZoom = (currentZoom + 0.5).coerceAtMost(20.0)
+
+                    // 커서가 있으면 3단계 처리
+                    if (showCursor && cursorLatLng != null) {
+                        // 1단계: 커서를 맵 중앙에 위치 (화면 중앙으로 이동)
+                        val centerLatLng = map.cameraPosition.target
+                        if (centerLatLng != null) {
+                            val centerScreenPoint = map.projection.toScreenLocation(centerLatLng)
+                            cursorScreenPosition = centerScreenPoint
+                            Log.d("[MainActivity]", "줌 인 - 1단계: 커서를 맵 중앙에 위치")
+                        }
+
+                        // 2단계: 이동하기 전 커서 위치로 지도 중앙 맞춤
+                        val originalCursorLatLng = cursorLatLng!!
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                            org.maplibre.android.camera.CameraPosition.Builder()
+                                .target(originalCursorLatLng)
+                                .zoom(newZoom)
+                                .build()
+                        )
+                        map.animateCamera(cameraUpdate, 300)
+
+                        Log.d("[MainActivity]", "줌 인 - 2단계: 원래 커서 위치로 지도 중앙 맞춤 + 3단계: 줌 인 처리")
+                    } else {
+                        // 커서가 없으면 일반 줌 인
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.zoomTo(newZoom)
+                        map.animateCamera(cameraUpdate, 300)
+                    }
+                    Log.d("[MainActivity]", "줌 인: $currentZoom -> $newZoom")
                 }
                 return true
             }
@@ -737,28 +1951,164 @@ class MainActivity : ComponentActivity() {
                 }
                 return true
             }
+            KeyEvent.KEYCODE_BUTTON_1 -> {
+                // 커서가 있을 때 줌 아웃 (기존 줌 버튼 처리 방식)
+                if (showCursor && cursorLatLng != null) {
+                    mapLibreMap?.let { map ->
+                        val currentZoom = map.cameraPosition.zoom
+                        val newZoom = (currentZoom - 0.5).coerceAtLeast(0.0)
+                        
+                        // 1단계: 커서를 맵 중앙에 위치 (화면 중앙으로 이동)
+                        val centerLatLng = map.cameraPosition.target
+                        if (centerLatLng != null) {
+                            val centerScreenPoint = map.projection.toScreenLocation(centerLatLng)
+                            cursorScreenPosition = centerScreenPoint
+                            android.util.Log.d("[MainActivity]", "줌 아웃 - 1단계: 커서를 맵 중앙에 위치")
+                        }
+                        
+                        // 2단계: 이동하기 전 커서 위치로 지도 중앙 맞춤
+                        val originalCursorLatLng = cursorLatLng!!
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                            org.maplibre.android.camera.CameraPosition.Builder()
+                                .target(originalCursorLatLng)
+                                .zoom(newZoom)
+                                .build()
+                        )
+                        map.animateCamera(cameraUpdate, 300)
+                        
+                        android.util.Log.d("[MainActivity]", "줌 아웃 - 2단계: 원래 커서 위치로 지도 중앙 맞춤 + 3단계: 줌 아웃 처리")
+                    }
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BUTTON_2 -> {
+                // 커서가 있을 때 줌 인 (기존 줌 버튼 처리 방식)
+                if (showCursor && cursorLatLng != null) {
+                    mapLibreMap?.let { map ->
+                        val currentZoom = map.cameraPosition.zoom
+                        val newZoom = (currentZoom + 0.5).coerceAtMost(20.0)
+                        
+                        // 1단계: 커서를 맵 중앙에 위치 (화면 중앙으로 이동)
+                        val centerLatLng = map.cameraPosition.target
+                        if (centerLatLng != null) {
+                            val centerScreenPoint = map.projection.toScreenLocation(centerLatLng)
+                            cursorScreenPosition = centerScreenPoint
+                            android.util.Log.d("[MainActivity]", "줌 인 - 1단계: 커서를 맵 중앙에 위치")
+                        }
+                        
+                        // 2단계: 이동하기 전 커서 위치로 지도 중앙 맞춤
+                        val originalCursorLatLng = cursorLatLng!!
+                        val cameraUpdate = org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                            org.maplibre.android.camera.CameraPosition.Builder()
+                                .target(originalCursorLatLng)
+                                .zoom(newZoom)
+                                .build()
+                        )
+                        map.animateCamera(cameraUpdate, 300)
+                        
+                        android.util.Log.d("[MainActivity]", "줌 인 - 2단계: 원래 커서 위치로 지도 중앙 맞춤 + 3단계: 줌 인 처리")
+                    }
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BUTTON_5 -> {
+                // 커서 클릭 이벤트 (목적지/포인트 클릭 처리)
+                if (showCursor && cursorLatLng != null && cursorScreenPosition != null) {
+                    Log.d("[MainActivity]", "커서 클릭 이벤트 발생: ${cursorLatLng!!.latitude}, ${cursorLatLng!!.longitude}")
+                    
+                    // 목적지 클릭 확인
+                    handleDestinationClick(cursorLatLng!!, cursorScreenPosition!!)
+                    
+                    // 포인트 클릭 확인 (화면 거리 기준)
+                    mapLibreMap?.let { map ->
+                        val savedPoints = loadPointsFromLocal()
+                        val closestPoint = savedPoints.minByOrNull { point ->
+                            val pointLatLng = LatLng(point.latitude, point.longitude)
+                            val screenDistance = calculateScreenDistance(cursorLatLng!!, pointLatLng, map)
+                            screenDistance
+                        }
+                        
+                        if (closestPoint != null) {
+                            val pointLatLng = LatLng(closestPoint.latitude, closestPoint.longitude)
+                            val screenDistance = calculateScreenDistance(cursorLatLng!!, pointLatLng, map)
+                            
+                            if (screenDistance <= 100) { // 100픽셀 이내
+                                Log.d("[MainActivity]", "포인트 클릭: ${closestPoint.name} (화면 거리: ${screenDistance}픽셀)")
+                                // 포인트 편집/삭제 다이얼로그 표시
+                                selectedPoint = closestPoint
+                                editPointName = closestPoint.name
+                                editSelectedColor = closestPoint.color
+                                showEditDialog = true
+                            } else {
+                                Log.d("[MainActivity]", "포인트 화면 거리가 너무 멀어서 클릭으로 인식하지 않음 (${screenDistance}픽셀)")
+                            }
+                        }
+                    }
+                }
+                return true
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
     
     private fun registerPoint() {
         currentLatLng?.let { latLng ->
+            // 자동 포인트명 생성 (사용 가능한 최소 번호)
+            val autoPointName = "Point${getNextAvailablePointNumber()}"
+            val finalPointName = if (pointName.isBlank()) autoPointName else pointName
+            
             val point = SavedPoint(
-                name = pointName,
+                name = finalPointName,
                 latitude = latLng.latitude,
                 longitude = latLng.longitude,
                 color = selectedColor,
+                iconType = selectedIconType,
                 timestamp = System.currentTimeMillis()
             )
             
             savePointToLocal(point)
+            pointCount++
             
             // 새로 등록된 포인트를 지도에 즉시 표시
             val allPoints = loadPointsFromLocal()
             locationManager?.updatePointsOnMap(allPoints)
             
-            android.util.Log.d("[MainActivity]", "포인트 등록 완료: $pointName, 좌표: $latLng, 색상: $selectedColor")
+            android.util.Log.d("[MainActivity]", "포인트 등록 완료: $finalPointName, 좌표: $latLng, 색상: $selectedColor, 아이콘: $selectedIconType")
             showDialog = false
+            // 포인트 등록 후 커서 숨김
+            showCursor = false
+            cursorLatLng = null
+            cursorScreenPosition = null
+        }
+    }
+    
+    // 빠른 포인트 생성 (다이얼로그 없이 바로 생성)
+    private fun createQuickPoint() {
+        cursorLatLng?.let { latLng ->
+            val autoPointName = "Point${getNextAvailablePointNumber()}"
+            
+            val point = SavedPoint(
+                name = autoPointName,
+                latitude = latLng.latitude,
+                longitude = latLng.longitude,
+                color = selectedColor,
+                iconType = selectedIconType,
+                timestamp = System.currentTimeMillis()
+            )
+            
+            savePointToLocal(point)
+            pointCount++
+            
+            // 새로 등록된 포인트를 지도에 즉시 표시
+            val allPoints = loadPointsFromLocal()
+            locationManager?.updatePointsOnMap(allPoints)
+            
+            android.util.Log.d("[MainActivity]", "빠른 포인트 생성 완료: $autoPointName, 좌표: $latLng, 색상: $selectedColor, 아이콘: $selectedIconType")
+            
+            // 포인트 생성 후 커서 숨김
+            showCursor = false
+            cursorLatLng = null
+            cursorScreenPosition = null
         }
     }
     
@@ -779,6 +2129,7 @@ class MainActivity : ComponentActivity() {
                         (p.color.green * 255).toInt(),
                         (p.color.blue * 255).toInt()
                     ))
+                    put("iconType", p.iconType)
                     put("timestamp", p.timestamp)
                 }
                 jsonArray.put(jsonObject)
@@ -808,6 +2159,7 @@ class MainActivity : ComponentActivity() {
                         latitude = jsonObject.getDouble("latitude"),
                         longitude = jsonObject.getDouble("longitude"),
                         color = Color(jsonObject.getInt("color")),
+                        iconType = jsonObject.optString("iconType", "circle"), // 기존 포인트는 기본값 "circle"
                         timestamp = jsonObject.getLong("timestamp")
                     )
                     points.add(point)
@@ -851,6 +2203,9 @@ class MainActivity : ComponentActivity() {
             
             // 지도에서 포인트 제거
             locationManager?.updatePointsOnMap(existingPoints)
+            
+            // pointCount 업데이트
+            pointCount = existingPoints.size
             
             android.util.Log.d("[MainActivity]", "포인트 삭제 완료: ${point.name}")
             showPointManageDialog = false
@@ -918,12 +2273,18 @@ fun ChartPlotterMap(
     onMapReady: (MapLibreMap) -> Unit = {},
     showCenterMarker: Boolean = true,
     isDialogShown: Boolean = false, // ⬅ 추가
+    showCursor: Boolean = false,
+    cursorLatLng: LatLng? = null,
+    cursorScreenPosition: android.graphics.PointF? = null,
+    onTouchEnd: (LatLng, android.graphics.PointF) -> Unit = { _, _ -> }, // 터치 종료 콜백
+    onTouchStart: () -> Unit = { } // 터치 시작 콜백
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // MapView는 한 번만 생성
     val mapView = remember { MapView(context) }
+    var mapLibreMapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
 
     // MapView 생명주기 연결
     DisposableEffect(lifecycleOwner, mapView) {
@@ -949,6 +2310,7 @@ fun ChartPlotterMap(
     LaunchedEffect(isDialogShown) {
         if (isDialogShown) mapView.onPause() else mapView.onResume()
     }
+    
 
     // Map이 준비되었을 때 1회만 초기 설정
     val mapConfigured = remember { mutableStateOf(false) }
@@ -958,8 +2320,92 @@ fun ChartPlotterMap(
             factory = { mapView },
             modifier = modifier
         ) { mapViewInstance ->
+            // 터치 이벤트 리스너 추가 (드래그와 단순 터치 구분, 핀치 줌 감지)
+            var isDragging = false
+            var touchStartTime = 0L
+            var touchStartX = 0f
+            var touchStartY = 0f
+            var isPinchZoom = false  // 핀치 줌 감지용
+            
+            mapViewInstance.setOnTouchListener { _, event ->
+                // 터치 포인트 개수로 핀치 줌 감지 (더 확실한 방법)
+                val pointerCount = event.pointerCount
+                if (pointerCount > 1) {
+                    isPinchZoom = true
+                    Log.d("[MainActivity]", "핀치 줌 감지 (포인트 ${pointerCount}개) - 모든 커서 처리 차단")
+                    return@setOnTouchListener false
+                }
+                
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        touchStartTime = System.currentTimeMillis()
+                        touchStartX = event.x
+                        touchStartY = event.y
+                        isDragging = false
+                        isPinchZoom = false
+                        Log.d("[MainActivity]", "터치 시작")
+                    }
+                    android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                        // 두 번째 손가락이 터치되면 핀치 줌으로 판단
+                        isPinchZoom = true
+                        Log.d("[MainActivity]", "ACTION_POINTER_DOWN - 핀치 줌 감지")
+                        return@setOnTouchListener false
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        // 핀치 줌 중이면 모든 커서 관련 처리 완전히 차단
+                        if (isPinchZoom) {
+                            return@setOnTouchListener false
+                        }
+                        
+                        // 움직임이 있으면 드래그로 판단
+                        val deltaX = Math.abs(event.x - touchStartX)
+                        val deltaY = Math.abs(event.y - touchStartY)
+                        if (deltaX > 10 || deltaY > 10) { // 10픽셀 이상 움직이면 드래그
+                            isDragging = true
+                            onTouchStart() // 드래그 중에는 커서 숨김
+                        }
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        val touchDuration = System.currentTimeMillis() - touchStartTime
+                        
+                        // 핀치 줌이었다면 커서 위치 그대로 유지
+                        if (isPinchZoom) {
+                            Log.d("[MainActivity]", "핀치 줌 종료 - 커서 위치 고정 유지")
+                            return@setOnTouchListener false
+                        }
+                        
+                        // MapLibreMap이 준비된 경우에만 처리
+                        mapLibreMapInstance?.let { map ->
+                            val x = event.x
+                            val y = event.y
+                            
+                            // 화면 좌표를 지리 좌표로 변환
+                            val latLng = map.projection.fromScreenLocation(android.graphics.PointF(x, y))
+                            val screenPoint = android.graphics.PointF(x, y)
+                            
+
+                            if (isDragging) {
+                                // 드래그 종료 시 커서 표시
+                                onTouchEnd(latLng, screenPoint)
+                                Log.d("[MainActivity]", "드래그 종료 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
+                            } else if (touchDuration < 500) { // 500ms 이내의 짧은 터치는 단순 클릭
+                                // 단순 터치 시 커서 표시
+                                onTouchEnd(latLng, screenPoint)
+                                Log.d("[MainActivity]", "단순 터치 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
+                            } else {
+                                // 긴 터치는 무시
+                                Log.d("[MainActivity]", "긴 터치 무시")
+                            }
+                        }
+                    }
+                }
+                false // 기본 터치 이벤트 허용 (지도 이동 가능)
+            }
             mapViewInstance.getMapAsync(object : OnMapReadyCallback {
                 override fun onMapReady(map: MapLibreMap) {
+                    // MapLibreMap 인스턴스 저장
+                    mapLibreMapInstance = map
+                    
                     if (!mapConfigured.value) {
                         val centerPoint = LatLng(35.0, 128.0)
                         map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
@@ -976,9 +2422,47 @@ fun ChartPlotterMap(
             })
         }
 
-        if (showCenterMarker) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(text = "+")
+        // 동적 커서 표시 (터치한 위치에)
+        if (showCursor && cursorScreenPosition != null) {
+            // 터치한 위치에 + 커서를 지도 위에 오버레이로 표시
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                // 터치한 화면 좌표에 커서 표시 (크기 증가)
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)  // 32dp -> 48dp로 크기 증가
+                  
+                        .offset(
+                            x = with(LocalDensity.current) { 
+                                val density = LocalDensity.current.density
+                                val cursorSizePx = 48 * density  // 32 -> 48로 변경
+                                val offsetPx = cursorSizePx / 2
+                                val xDp = (cursorScreenPosition!!.x - offsetPx) / density
+                                Log.d("[MainActivity]", "Compose X: ${cursorScreenPosition!!.x}px -> ${xDp}dp (오프셋: ${offsetPx}px)")
+                                xDp.dp
+                            },
+                            y = with(LocalDensity.current) { 
+                                val density = LocalDensity.current.density
+                                val cursorSizePx = 48 * density  // 32 -> 48로 변경
+                                val offsetPx = cursorSizePx / 2
+                                val yDp = (cursorScreenPosition!!.y - offsetPx) / density
+                                Log.d("[MainActivity]", "Compose Y: ${cursorScreenPosition!!.y}px -> ${yDp}dp (오프셋: ${offsetPx}px)")
+                                yDp.dp
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "+",
+                        fontSize = 28.sp,  // 20sp -> 28sp로 폰트 크기 증가
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Red
+                    )
+                }
             }
         }
     }
@@ -994,6 +2478,9 @@ fun PointRegistrationDialog(
     onPointNameChange: (String) -> Unit,
     selectedColor: Color,
     onColorChange: (Color) -> Unit,
+    selectedIconType: String,
+    onIconTypeChange: (String) -> Unit,
+    getNextAvailablePointNumber: () -> Int,
     onRegister: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1021,15 +2508,19 @@ fun PointRegistrationDialog(
                 Text("현재 화면 중앙 좌표:", fontSize = 14.sp)
                 Text(
                     text = centerCoordinates,
-                    modifier = Modifier.padding(vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                                                .padding(vertical = 8.dp),
                     fontSize = 12.sp
                 )
                 
-                // 포인트명 입력 (포커스 표시)
+                // 포인트명 입력 (자동 생성 + 편집 가능)
+                val autoPointName = "Point${getNextAvailablePointNumber()}"
+                val displayPointName = if (pointName.isBlank()) autoPointName else pointName
+                
                 TextField(
-                    value = pointName,
+                    value = displayPointName,
                     onValueChange = onPointNameChange,
-                    label = { Text("포인트명") },
+                    label = { Text("포인트명 (자동: $autoPointName)") },
                     modifier = Modifier
                         .padding(vertical = 4.dp)
                         .background(
@@ -1141,6 +2632,82 @@ fun PointRegistrationDialog(
                                 onColorChange(color)
                                 showColorMenu = false
                             }
+                        )
+                    }
+                }
+                
+                // 아이콘 선택
+                Text("아이콘:", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    // 원 아이콘
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                if (selectedIconType == "circle") Color(0xFF4CAF50) else Color(0xFFE0E0E0),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onIconTypeChange("circle") }
+                            .border(
+                                width = 2.dp,
+                                color = if (selectedIconType == "circle") Color(0xFF2E7D32) else Color(0xFFBDBDBD),
+                                shape = RoundedCornerShape(8.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .background(Color.Red, CircleShape)
+                        )
+                    }
+                    
+                    // 삼각형 아이콘
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                if (selectedIconType == "triangle") Color(0xFF4CAF50) else Color(0xFFE0E0E0),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onIconTypeChange("triangle") }
+                            .border(
+                                width = 2.dp,
+                                color = if (selectedIconType == "triangle") Color(0xFF2E7D32) else Color(0xFFBDBDBD),
+                                shape = RoundedCornerShape(8.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "▲",
+                            fontSize = 20.sp,
+                            color = Color.Red
+                        )
+                    }
+                    
+                    // 사각형 아이콘
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                if (selectedIconType == "square") Color(0xFF4CAF50) else Color(0xFFE0E0E0),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onIconTypeChange("square") }
+                            .border(
+                                width = 2.dp,
+                                color = if (selectedIconType == "square") Color(0xFF2E7D32) else Color(0xFFBDBDBD),
+                                shape = RoundedCornerShape(8.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .background(Color.Red, RoundedCornerShape(2.dp))
                         )
                     }
                 }
@@ -1360,7 +2927,8 @@ fun PointEditDialog(
                 Text("좌표:", fontSize = 14.sp)
                 Text(
                     text = "위도: ${String.format("%.6f", point.latitude)}\n경도: ${String.format("%.6f", point.longitude)}",
-                    modifier = Modifier.padding(vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                                                .padding(vertical = 8.dp),
                     fontSize = 12.sp
                 )
                 

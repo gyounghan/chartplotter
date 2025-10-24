@@ -63,6 +63,9 @@ dependencies {
     // MapLibre Android for PMTiles support
     implementation("org.maplibre.gl:android-sdk:11.8.5")
     
+    // Google Play Services for better location services
+    implementation("com.google.android.gms:play-services-location:21.0.1")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

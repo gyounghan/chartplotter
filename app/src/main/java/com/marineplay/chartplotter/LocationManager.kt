@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -16,10 +17,17 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
+import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.Priority
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -45,16 +53,27 @@ import android.location.LocationManager as SysLocationManager
  */
 class LocationManager(
     private val context: Context,
-    private val map: MapLibreMap
+    private val map: MapLibreMap,
+    private val onGpsLocationUpdate: ((Double, Double, Boolean) -> Unit)? = null,
+    private val onBearingUpdate: ((Float) -> Unit)? = null
 ) : LocationListener, SensorEventListener {
 
-    // 시스템 LocationManager
+    // 시스템 LocationManager (백업용)
     private val lm = context.getSystemService(Context.LOCATION_SERVICE) as SysLocationManager
+    
+    // Google Play Services FusedLocationProviderClient (주요 사용)
+    private val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
     
     // 센서 관련
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private var orientationSensor: Sensor? = null
     private var currentBearing: Float = 0f // 현재 방위각 (도)
+    
+    // 현재 bearing 반환
+    fun getCurrentBearing(): Float = currentBearing
+    
+    // 현재 위치 반환 (Location 객체)
+    fun getCurrentLocationObject(): Location? = currentLocation
 
     private var currentLocation: Location? = null
     private var shipSource: GeoJsonSource? = null
@@ -68,10 +87,21 @@ class LocationManager(
     private var pointsSource: GeoJsonSource? = null
     private var pointsLayer: SymbolLayer? = null
     private var onPointClickListener: ((SavedPoint) -> Unit)? = null
+    
+    // FusedLocationProvider 콜백
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(locationResult: LocationResult) {
+            locationResult.lastLocation?.let { location ->
+                Log.d("[LocationManager]", "FusedLocationProvider 위치 업데이트: ${location.latitude}, ${location.longitude}")
+                onLocationChanged(location)
+            }
+        }
+    }
 
     companion object {
-        private const val MIN_DISTANCE_CHANGE_FOR_UPDATES = 10f // 10 m
-        private const val MIN_TIME_BETWEEN_UPDATES = 1000L      // 1 s
+        private const val MIN_DISTANCE_CHANGE_FOR_UPDATES = 1f // 1 m (더 민감하게)
+        private const val MIN_TIME_BETWEEN_UPDATES = 5000L      // 5 s (더 자주 업데이트)
+        private const val FASTEST_INTERVAL = 2000L              // 2 s (최소 간격)
         private const val SHIP_SOURCE_ID = "ship-location"
         private const val SHIP_LAYER_ID = "ship-symbol"
         private const val POINTS_SOURCE_ID = "saved-points"
@@ -105,13 +135,20 @@ class LocationManager(
         )
         var best: Location? = null
         for (p in candidates) {
-            val loc = try { lm.getLastKnownLocation(p) } catch (_: Exception) { null }
+            val loc = try { 
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    lm.getLastKnownLocation(p)
+                } else {
+                    null
+                }
+            } catch (_: Exception) { null }
             if (loc != null && (best == null || loc.time > best!!.time)) best = loc
         }
         return best
     }
 
-    /** 위치 추적 시작 */
+    /** 위치 추적 시작 (FusedLocationProvider 사용) */
     @SuppressLint("MissingPermission")
     fun startLocationUpdates() {
         if (!hasLocationPermission()) {
@@ -119,6 +156,44 @@ class LocationManager(
             return
         }
 
+        try {
+            // Google Play Services FusedLocationProvider 사용
+            val locationRequest = LocationRequest.Builder(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                MIN_TIME_BETWEEN_UPDATES
+            ).apply {
+                setMinUpdateDistanceMeters(MIN_DISTANCE_CHANGE_FOR_UPDATES)
+                setWaitForAccurateLocation(false) // 빠른 초기 위치를 위해
+                setMaxUpdateDelayMillis(MIN_TIME_BETWEEN_UPDATES * 2)
+            }.build()
+
+            // 위치 업데이트 요청
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback,
+                Looper.getMainLooper()
+            )
+            
+            // 즉시 마지막 알려진 위치 가져오기
+            getLastKnownLocation()
+            
+            Log.d("[LocationManager]", "FusedLocationProvider 위치 추적 시작")
+        } catch (e: SecurityException) {
+            Log.e("[LocationManager]", "권한 오류: ${e.message}")
+            // 백업으로 기본 LocationManager 사용
+            startLocationUpdatesFallback()
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "FusedLocationProvider 오류: ${e.message}")
+            // 백업으로 기본 LocationManager 사용
+            startLocationUpdatesFallback()
+        }
+    }
+    
+    /** 백업 위치 추적 (기본 LocationManager 사용) */
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdatesFallback() {
+        Log.d("[LocationManager]", "기본 LocationManager로 백업 위치 추적 시작")
+        
         val provider = pickProvider()
         if (provider == null) {
             Log.e("[LocationManager]", "사용 가능한 위치 프로바이더가 없습니다. 설정에서 위치를 켜주세요.")
@@ -131,7 +206,6 @@ class LocationManager(
         }
 
         try {
-            // 크래시 방지: 존재/활성 확인된 provider만 요청 + 메인 루퍼 지정
             lm.requestLocationUpdates(
                 provider,
                 MIN_TIME_BETWEEN_UPDATES,
@@ -139,31 +213,72 @@ class LocationManager(
                 this,
                 Looper.getMainLooper()
             )
-            // UX: 시작 즉시 마지막 위치로 한번 업데이트/카메라 이동
-            bestLastKnownLocation()?.let { onLocationChanged(it) }
-            Log.d("[LocationManager]", "위치 추적 시작 (provider=$provider)")
-        } catch (e: IllegalArgumentException) {
-            Log.e("[LocationManager]", "프로바이더 오류: $provider", e)
-        } catch (e: SecurityException) {
-            Log.e("[LocationManager]", "권한 오류: ${e.message}")
+            
+            requestLocationFromAllProviders()
+            requestImmediateLocation(provider)
+            
+            Log.d("[LocationManager]", "백업 위치 추적 시작 (provider=$provider)")
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "백업 위치 추적 실패: ${e.message}")
+        }
+    }
+
+    /** 마지막 알려진 위치 가져오기 (FusedLocationProvider) */
+    @SuppressLint("MissingPermission")
+    private fun getLastKnownLocation() {
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    val timeDiff = System.currentTimeMillis() - location.time
+                    if (timeDiff < 1800000) { // 30분 이내의 위치
+                        Log.d("[LocationManager]", "FusedLocationProvider 마지막 위치 사용: ${timeDiff}ms 전")
+                        onLocationChanged(location)
+                    } else {
+                        Log.d("[LocationManager]", "FusedLocationProvider 마지막 위치가 너무 오래됨: ${timeDiff}ms")
+                    }
+                } else {
+                    Log.d("[LocationManager]", "FusedLocationProvider 마지막 위치 없음")
+                }
+            }.addOnFailureListener { exception ->
+                Log.e("[LocationManager]", "FusedLocationProvider 마지막 위치 가져오기 실패: ${exception.message}")
+            }
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "FusedLocationProvider 마지막 위치 요청 실패: ${e.message}")
         }
     }
 
     /** 위치 추적 중지 */
     fun stopLocationUpdates() {
-        try { lm.removeUpdates(this) } catch (_: Exception) {}
+        try { 
+            // FusedLocationProvider 중지
+            fusedLocationClient.removeLocationUpdates(locationCallback)
+            // 기본 LocationManager 중지 (백업용)
+            lm.removeUpdates(this) 
+        } catch (_: Exception) {}
         Log.d("[LocationManager]", "위치 추적이 중지되었습니다.")
     }
 
     /** 위치 변경 콜백 */
     override fun onLocationChanged(location: Location) {
+        val isFirstLocation = currentLocation == null
         currentLocation = location
-        Log.d("[LocationManager]", "위치 업데이트: ${location.latitude}, ${location.longitude}")
+        
+        Log.d("[LocationManager]", "위치 업데이트: 위도 ${location.latitude}, 경도 ${location.longitude}")
+        Log.d("[LocationManager]", "위치 정확도: ${location.accuracy}m, 속도: ${location.speed}m/s, 시간: ${location.time}")
+        
         updateShipLocation(location)
         
-        // 자동 추적이 활성화된 경우에만 카메라를 따라가게 함
-        if (isAutoTracking) {
+        // GPS 좌표 업데이트 콜백 호출
+        onGpsLocationUpdate?.invoke(location.latitude, location.longitude, true)
+        
+        // 첫 번째 위치 정보를 받았거나 자동 추적이 활성화된 경우 카메라를 따라가게 함
+        if (isFirstLocation || isAutoTracking) {
             centerMapOnCurrentLocation()
+            // 첫 번째 위치에서는 자동 추적을 활성화
+            if (isFirstLocation) {
+                isAutoTracking = true
+                Log.d("[LocationManager]", "첫 번째 위치 획득으로 자동 추적 활성화")
+            }
         }
     }
 
@@ -209,11 +324,14 @@ class LocationManager(
             // 2) 정지/저속이면 센서 방위 사용
             val bearing = gpsBearing ?: currentBearing
 
+//            Log.d("[LocationManager]", "선박 위치 업데이트: 위치(${latLng.latitude}, ${latLng.longitude}), 속도: ${speedMps}m/s")
+//            Log.d("[LocationManager]", "선박 방향: GPS=${gpsBearing}도, 센서=${currentBearing}도, 최종=${bearing}도")
+
             // 3) 피처에 bearing 속성 포함
             val feature = Feature.fromGeometry(
                 Point.fromLngLat(latLng.longitude, latLng.latitude)
             ).apply {
-                addNumberProperty("bearing", ((bearing % 360) + 360) % 360) // 0~360 정규화
+                addNumberProperty("bearing", ((currentBearing % 360) + 360) % 360) // 0~360 정규화
             }
 
 //            // 회전된 삼각형 아이콘 생성
@@ -223,8 +341,7 @@ class LocationManager(
 //            map.style?.addImage("ship-icon", shipIcon)
             
             shipSource?.setGeoJson(feature)
-            
-            Log.d("[LocationManager]", "선박 아이콘 업데이트: 방위각 ${bearing}도")
+//            Log.d("[LocationManager]", "선박 소스 업데이트 완료: bearing=${((bearing % 360) + 360) % 360}도")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "선박 아이콘 업데이트 실패: ${e.message}")
         }
@@ -335,7 +452,7 @@ class LocationManager(
     }
     
     /** 포인트 마커 비트맵 생성 */
-    private fun createPointIconBitmap(color: ComposeColor): Bitmap {
+    private fun createPointIconBitmap(color: ComposeColor, iconType: String = "circle"): Bitmap {
         val size = 32
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -364,10 +481,35 @@ class LocationManager(
         val centerY = size / 2f
         val radius = size / 2f - 4f
         
-        // 색상 원 그리기
-        canvas.drawCircle(centerX, centerY, radius, fillPaint)
-        // 흰색 테두리 그리기
-        canvas.drawCircle(centerX, centerY, radius, borderPaint)
+        when (iconType) {
+            "circle" -> {
+                // 원 그리기
+                canvas.drawCircle(centerX, centerY, radius, fillPaint)
+                canvas.drawCircle(centerX, centerY, radius, borderPaint)
+            }
+            "triangle" -> {
+                // 삼각형 그리기
+                val path = android.graphics.Path().apply {
+                    moveTo(centerX, centerY - radius) // 위쪽 꼭짓점
+                    lineTo(centerX - radius * 0.866f, centerY + radius * 0.5f) // 왼쪽 아래
+                    lineTo(centerX + radius * 0.866f, centerY + radius * 0.5f) // 오른쪽 아래
+                    close()
+                }
+                canvas.drawPath(path, fillPaint)
+                canvas.drawPath(path, borderPaint)
+            }
+            "square" -> {
+                // 사각형 그리기
+                val rect = android.graphics.RectF(
+                    centerX - radius * 0.7f,
+                    centerY - radius * 0.7f,
+                    centerX + radius * 0.7f,
+                    centerY + radius * 0.7f
+                )
+                canvas.drawRoundRect(rect, 4f, 4f, fillPaint)
+                canvas.drawRoundRect(rect, 4f, 4f, borderPaint)
+            }
+        }
         
         return bitmap
     }
@@ -388,7 +530,7 @@ class LocationManager(
             // 각 포인트마다 고유한 아이콘 생성 및 스타일에 추가
             points.forEachIndexed { index, point ->
                 val iconId = "point-icon-$index"
-                val bitmap = createPointIconBitmap(point.color)
+                val bitmap = createPointIconBitmap(point.color, point.iconType)
                 map.style?.addImage(iconId, bitmap)
             }
             
@@ -398,6 +540,7 @@ class LocationManager(
                 Feature.fromGeometry(geometry).apply {
                     addStringProperty("name", point.name)
                     addStringProperty("colorHex", colorHex)
+                    addStringProperty("iconType", point.iconType)
                     addStringProperty("id", "${point.latitude}_${point.longitude}_${point.timestamp}")
                     addStringProperty("iconId", "point-icon-$index") // 고유 아이콘 ID
                 }
@@ -411,16 +554,27 @@ class LocationManager(
     
     /** 센서 초기화 */
     fun initializeSensors() {
+        Log.d("[LocationManager]", "센서 초기화 시작...")
         orientationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION)
         if (orientationSensor != null) {
-            sensorManager.registerListener(this, orientationSensor, SensorManager.SENSOR_DELAY_UI)
-            Log.d("[LocationManager]", "방향 센서 등록 완료")
+            val sensor = orientationSensor!!
+            val success = sensorManager.registerListener(this, sensor, 1000_000)
+            if (success) {
+                Log.d("[LocationManager]", "방향 센서 등록 완료 - 센서명: ${sensor.name}")
+                Log.d("[LocationManager]", "센서 타입: ${sensor.type}, 최대 범위: ${sensor.maximumRange}")
+            } else {
+                Log.e("[LocationManager]", "방향 센서 등록 실패")
+            }
         } else {
-            Log.w("[LocationManager]", "방향 센서를 사용할 수 없습니다")
+            Log.w("[LocationManager]", "방향 센서를 사용할 수 없습니다 - TYPE_ORIENTATION 센서가 없음")
         }
         rotationVector?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-            Log.d("[LocationManager]", "Rotation Vector 센서 등록 완료")
+            val success = sensorManager.registerListener(this, it, 1000_000)
+            if (success) {
+                Log.d("[LocationManager]", "Rotation Vector 센서 등록 완료 - 센서명: ${it.name}")
+            } else {
+                Log.e("[LocationManager]", "Rotation Vector 센서 등록 실패")
+            }
         } ?: Log.w("[LocationManager]", "Rotation Vector 센서를 사용할 수 없습니다")
     }
     
@@ -433,6 +587,8 @@ class LocationManager(
     /** SensorEventListener 구현 */
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type != Sensor.TYPE_ROTATION_VECTOR) return
+
+//        Log.v("[LocationManager]", "센서 이벤트 수신 - 센서: ${event.sensor.name}, 값: [${event.values.joinToString(", ")}]")
 
         val rot = FloatArray(9)
         val outRot = FloatArray(9)
@@ -461,11 +617,27 @@ class LocationManager(
         val azimuthRad = ori[0]
         val azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
 
+//        Log.v("[LocationManager]", "방향 계산 - Azimuth: ${azimuthDeg}도, Pitch: ${Math.toDegrees(ori[1].toDouble())}도, Roll: ${Math.toDegrees(ori[2].toDouble())}도")
+
         // 4) 0~360 정규화
-        currentBearing = ((azimuthDeg % 360f) + 360f) % 360f
+        val newBearing = ((azimuthDeg % 360f) + 360f) % 360f
+        val bearingChanged = Math.abs(newBearing - currentBearing) > 1.0f // 1도 이상 변경시
+        
+//        Log.d("[LocationManager]", "보트 방향: ${newBearing}도 (이전: ${currentBearing}도, 변경: ${if (bearingChanged) "YES" else "NO"})")
+        
+        currentBearing = newBearing
+
+        // Bearing 변경 콜백 호출
+        if (bearingChanged) {
+//            Log.d("[LocationManager]", "선박 보트 방향 변경: ${currentBearing}도 (헤딩업 모드에서 지도 회전)")
+            onBearingUpdate?.invoke(currentBearing)
+        }
 
         // 위치가 있다면 즉시 갱신(정지 상태에서도 머리방향이 바뀌도록)
-        currentLocation?.let { updateShipLocation(it) }
+        currentLocation?.let { 
+//            Log.d("[LocationManager]", "센서 bearing 변경으로 선박 아이콘 강제 업데이트")
+            updateShipLocation(it) 
+        }
     }
     
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
@@ -521,5 +693,100 @@ class LocationManager(
         return bitmap
     }
     
+    /** 위치 서비스 초기화 */
+    private fun initializeLocationServices() {
+        try {
+            // GPS 프로바이더가 활성화되어 있는지 확인
+            val isGpsEnabled = lm.isProviderEnabled(SysLocationManager.GPS_PROVIDER)
+            val isNetworkEnabled = lm.isProviderEnabled(SysLocationManager.NETWORK_PROVIDER)
+            
+            Log.d("[LocationManager]", "GPS 활성화: $isGpsEnabled, 네트워크 활성화: $isNetworkEnabled")
+            
+            if (!isGpsEnabled && !isNetworkEnabled) {
+                Log.w("[LocationManager]", "모든 위치 프로바이더가 비활성화되어 있습니다.")
+                return
+            }
+            
+            // 위치 서비스가 준비될 때까지 잠시 대기
+            Thread.sleep(100)
+            
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "위치 서비스 초기화 실패: ${e.message}")
+        }
+    }
+    
+    /** 모든 활성화된 프로바이더에서 위치 요청 */
+    @SuppressLint("MissingPermission")
+    private fun requestLocationFromAllProviders() {
+        try {
+            val enabledProviders = lm.getProviders(true)
+            Log.d("[LocationManager]", "활성화된 프로바이더들: $enabledProviders")
+            
+            for (provider in enabledProviders) {
+                try {
+                    // 각 프로바이더에서 단발성 위치 요청
+                    lm.requestSingleUpdate(provider, object : android.location.LocationListener {
+                        override fun onLocationChanged(location: Location) {
+                            Log.d("[LocationManager]", "프로바이더 ${provider}에서 위치 획득: ${location.latitude}, ${location.longitude}")
+                            this@LocationManager.onLocationChanged(location)
+                        }
+                        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                        override fun onProviderEnabled(provider: String) {}
+                        override fun onProviderDisabled(provider: String) {}
+                    }, Looper.getMainLooper())
+                } catch (e: Exception) {
+                    Log.w("[LocationManager]", "프로바이더 ${provider}에서 위치 요청 실패: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "모든 프로바이더 위치 요청 실패: ${e.message}")
+        }
+    }
+    
+    /** 즉시 위치 요청 (콜드 스타트 해결) */
+    private fun requestImmediateLocation(provider: String) {
+        try {
+            // 마지막 알려진 위치 가져오기 (모든 프로바이더에서)
+            val allProviders = listOf(
+                SysLocationManager.GPS_PROVIDER,
+                SysLocationManager.NETWORK_PROVIDER,
+                SysLocationManager.PASSIVE_PROVIDER
+            )
+            
+            for (p in allProviders) {
+                try {
+                    val lastKnownLocation = lm.getLastKnownLocation(p)
+                    if (lastKnownLocation != null) {
+                        val timeDiff = System.currentTimeMillis() - lastKnownLocation.time
+                        if (timeDiff < 1800000) { // 30분 이내의 위치 (더 관대하게)
+                            Log.d("[LocationManager]", "프로바이더 ${p}의 마지막 알려진 위치 사용: ${timeDiff}ms 전")
+                            onLocationChanged(lastKnownLocation)
+                            break // 첫 번째 유효한 위치만 사용
+                        } else {
+                            Log.d("[LocationManager]", "프로바이더 ${p}의 마지막 알려진 위치가 너무 오래됨: ${timeDiff}ms")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("[LocationManager]", "프로바이더 ${p}에서 마지막 위치 가져오기 실패: ${e.message}")
+                }
+            }
+            
+            // 즉시 위치 요청 (단발성)
+            lm.requestSingleUpdate(provider, object : android.location.LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    Log.d("[LocationManager]", "즉시 위치 업데이트: ${location.latitude}, ${location.longitude}")
+                    this@LocationManager.onLocationChanged(location)
+                }
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {}
+            }, Looper.getMainLooper())
+            
+        } catch (e: SecurityException) {
+            Log.e("[LocationManager]", "즉시 위치 요청 권한 오류: ${e.message}")
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "즉시 위치 요청 실패: ${e.message}")
+        }
+    }
     
 }
