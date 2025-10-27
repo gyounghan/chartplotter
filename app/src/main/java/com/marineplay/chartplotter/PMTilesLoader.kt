@@ -280,7 +280,7 @@ object PMTilesLoader {
             
             setProperties(
                 PropertyFactory.lineColor(lineColorExpr),
-                PropertyFactory.lineWidth(1.0f)
+                PropertyFactory.lineWidth(0.2f)
             )
         }
         
