@@ -429,6 +429,9 @@ object PMTilesLoader {
             "marker" to "marker_icon"
         )
         
+        // 아이콘별 스케일 비율 저장용
+        val iconScaleMap = mutableMapOf<String, Float>()
+        val targetSizePx: Int = 80 // 목표 크기 (px)
         val finalIconMapping = if (iconMapping.isEmpty()) defaultIconMapping else iconMapping
         
         // 1) 모든 아이콘을 스타일에 등록 (파일 확장자에 따라 다르게 처리)
@@ -455,7 +458,13 @@ object PMTilesLoader {
                         }
                         
                         if (bitmap != null) {
-                            style.addImage(iconId, bitmap)
+                             // 아이콘 비트맵의 최대 변 기준으로 스케일 계산
+                            val maxDim: Int = kotlin.math.max(bitmap.width, bitmap.height)
+                            val scale: Float = targetSizePx.toFloat() / maxDim.toFloat()
+                            iconScaleMap[iconId] = scale
+
+//                            style.addImage(iconId, bitmap, true)
+                             style.addImage(iconId, bitmap)
                             Log.d("[PMTilesLoader]", "동적 아이콘 로드 완료: $iconValue -> $drawableName (${if (drawableName.endsWith(".bmp", ignoreCase = true)) "BMP 직접 사용" else "BitmapFactory 변환"})")
                         } else {
                             Log.w("[PMTilesLoader]", "아이콘 비트맵 생성 실패: $drawableName")
@@ -489,13 +498,28 @@ object PMTilesLoader {
                 iconAllowOverlap(true),
                 iconIgnorePlacement(false),
                 iconAnchor(Property.ICON_ANCHOR_CENTER),
+
                 // 확대할수록 살짝 키우기
                 iconSize(
+                    product(
                     interpolate(
                         exponential(1f), zoom(),
-                        stop(14, 1f),
-                        stop(16, 2f)
+                        stop(10, 0.8f),
+                        stop(14, 1.0f),
+                        stop(18, 1.8f)
+                    ),
+                     match(
+                         get("ICON"),
+                         literal(1.0f), // 기본값
+                         *finalIconMapping.map { (iconValue, _) ->
+                             val iconId = "${config.sourceName}-${iconValue}-icon"
+                             val scale = iconScaleMap[iconId] ?: 1.0f
+                             stop(iconValue, literal(scale))
+                         }.toTypedArray()
+                     )
                     )
+
+//                    interpolate( exponential(1f), zoom(), stop(14, 1f), stop(16, 2f) )
                 )
             )
         }
@@ -632,6 +656,160 @@ object PMTilesLoader {
         canvas.drawCircle(size / 2f, size / 2f, 4f, centerPaint)
         
         return bitmap
+    }
+    
+    /**
+     * 항해 모드에서 목적지와 현재 위치를 연결하는 선을 그립니다
+     */
+    fun addNavigationLine(map: MapLibreMap, currentLocation: LatLng, destination: LatLng) {
+        map.getStyle { style ->
+            try {
+                // 기존 항해 선 제거
+                removeNavigationLine(map)
+                
+                // GeoJSON LineString 생성
+                val navigationLineGeoJson = """
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": [
+                                    [${currentLocation.longitude}, ${currentLocation.latitude}],
+                                    [${destination.longitude}, ${destination.latitude}]
+                                ]
+                            },
+                            "properties": {
+                                "name": "navigation_line"
+                            }
+                        }
+                    ]
+                }
+                """.trimIndent()
+                
+                // GeoJsonSource 추가
+                val navigationLineSource = GeoJsonSource("navigation_line_source", navigationLineGeoJson)
+                style.addSource(navigationLineSource)
+                
+                // LineLayer 추가 (파란색으로 구분)
+                val navigationLineLayer = LineLayer("navigation_line_layer", "navigation_line_source")
+                    .withProperties(
+                        PropertyFactory.lineColor(Color.BLUE),
+                        PropertyFactory.lineWidth(2.0f),
+                        PropertyFactory.lineOpacity(0.8f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                    )
+                style.addLayer(navigationLineLayer)
+                
+                Log.d("[PMTilesLoader]", "항해 선 추가됨: ${currentLocation} -> ${destination}")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항해 선 추가 실패: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 항해 선을 제거합니다
+     */
+    fun removeNavigationLine(map: MapLibreMap) {
+        map.getStyle { style ->
+            try {
+                // 기존 항해 선 레이어 제거
+                if (style.getLayer("navigation_line_layer") != null) {
+                    style.removeLayer("navigation_line_layer")
+                }
+                
+                // 기존 항해 선 소스 제거
+                if (style.getSource("navigation_line_source") != null) {
+                    style.removeSource("navigation_line_source")
+                }
+                
+                Log.d("[PMTilesLoader]", "항해 선 제거됨")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항해 선 제거 실패: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 항해 목적지 마커를 추가합니다
+     */
+    fun addNavigationMarker(map: MapLibreMap, location: LatLng, name: String) {
+        map.getStyle { style ->
+            try {
+                // 기존 항해 마커 제거
+                removeNavigationMarker(map)
+                
+                // GeoJSON Point 생성
+                val navigationMarkerGeoJson = """
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [${location.longitude}, ${location.latitude}]
+                            },
+                            "properties": {
+                                "name": "$name",
+                                "type": "navigation_marker"
+                            }
+                        }
+                    ]
+                }
+                """.trimIndent()
+                
+                // GeoJsonSource 추가
+                val navigationMarkerSource = GeoJsonSource("navigation_marker_source", navigationMarkerGeoJson)
+                style.addSource(navigationMarkerSource)
+                
+                // CircleLayer 추가 (파란색 원)
+                val navigationMarkerLayer = CircleLayer("navigation_marker_layer", "navigation_marker_source")
+                    .withProperties(
+                        PropertyFactory.circleColor(Color.BLUE),
+                        PropertyFactory.circleRadius(8.0f),
+                        PropertyFactory.circleOpacity(0.8f),
+                        PropertyFactory.circleStrokeColor(Color.WHITE),
+                        PropertyFactory.circleStrokeWidth(2.0f)
+                    )
+                style.addLayer(navigationMarkerLayer)
+                
+                Log.d("[PMTilesLoader]", "항해 마커 추가됨: $name at $location")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항해 마커 추가 실패: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 항해 마커를 제거합니다
+     */
+    fun removeNavigationMarker(map: MapLibreMap) {
+        map.getStyle { style ->
+            try {
+                // 기존 항해 마커 레이어 제거
+                if (style.getLayer("navigation_marker_layer") != null) {
+                    style.removeLayer("navigation_marker_layer")
+                }
+                
+                // 기존 항해 마커 소스 제거
+                if (style.getSource("navigation_marker_source") != null) {
+                    style.removeSource("navigation_marker_source")
+                }
+                
+                Log.d("[PMTilesLoader]", "항해 마커 제거됨")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항해 마커 제거 실패: ${e.message}")
+            }
+        }
     }
     
     /**

@@ -138,6 +138,9 @@ data class Destination(
 class MainActivity : ComponentActivity() {
 
     private var locationManager: LocationManager? = null
+    // 지도 이동 감지용 Handler (클래스 레벨에서 관리)
+    private var mapStabilityHandler: android.os.Handler? = null
+    private var mapStabilityRunnable: Runnable? = null
     private var mapLibreMap: MapLibreMap? = null
     private var showDialog by mutableStateOf(false)
 
@@ -180,6 +183,7 @@ class MainActivity : ComponentActivity() {
     // 지도 표시 모드 관련
     private var mapDisplayMode by mutableStateOf("노스업") // 노스업, 헤딩업, 코스업
     private var coursePoint by mutableStateOf<SavedPoint?>(null) // 코스업용 포인트
+    private var navigationPoint by mutableStateOf<SavedPoint?>(null) // 항해용 포인트 (커서 위치)
     
     // 줌 롱 클릭 관련
     private var isZoomInLongPressed by mutableStateOf(false)
@@ -337,17 +341,25 @@ class MainActivity : ComponentActivity() {
                                 currentLocation.latitude, currentLocation.longitude,
                                 point.latitude, point.longitude
                             )
+                            
+                            // 선박 위치를 중앙에 오도록 설정
+                            val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
                             val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
-                                .target(map.cameraPosition.target)
+                                .target(currentLatLng) // 선박 위치를 중앙으로
                                 .zoom(map.cameraPosition.zoom)
                                 .bearing(bearing.toDouble())
                                 .build()
                             map.cameraPosition = newPosition
+                            
+                            // 커서 숨기기
+                            showCursor = false
+                            cursorLatLng = null
+                            cursorScreenPosition = null
 
                             // 코스업 선 그리기
-                            val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
-                            val pointLatLng = LatLng(point.latitude, point.longitude)
-                            PMTilesLoader.addCourseLine(map, currentLatLng, pointLatLng)
+//                            val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
+//                            val pointLatLng = LatLng(point.latitude, point.longitude)
+//                            PMTilesLoader.addCourseLine(map, currentLatLng, pointLatLng)
                         }
                     }
                 }
@@ -586,9 +598,38 @@ class MainActivity : ComponentActivity() {
                                                 .fillMaxWidth()
                                                 .padding(vertical = 4.dp)
                                                 .clickable {
-                                                    coursePoint = point
+                                                    // 항해 메뉴에서 호출된 경우 항해 포인트로 설정
+                                                    if (currentMenu == "navigation") {
+                                                        // 기존 항해 선과 마커 제거
+                                                        mapLibreMap?.let { map ->
+                                                            PMTilesLoader.removeNavigationLine(map)
+                                                            PMTilesLoader.removeNavigationMarker(map)
+                                                        }
+                                                        
+                                                        navigationPoint = point
+                                                        // 항해 선 및 마커 표시
+                                                        val currentLocation = locationManager?.getCurrentLocationObject()
+                                                        val map = mapLibreMap
+                                                        if (currentLocation != null && map != null) {
+                                                            val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
+                                                            val navigationLatLng = LatLng(point.latitude, point.longitude)
+                                                            PMTilesLoader.addNavigationLine(map, currentLatLng, navigationLatLng)
+                                                            PMTilesLoader.addNavigationMarker(map, navigationLatLng, point.name)
+                                                        }
+                                                        
+                                                        // 코스업 모드가 켜져 있다면 새로운 항해 목적지로 코스업 적용
+                                                        if (mapDisplayMode == "코스업") {
+                                                            coursePoint = point
+                                                            updateMapRotation()
+                                                            Log.d("[MainActivity]", "항해 목적지 변경으로 코스업 재적용: ${point.name}")
+                                                        }
+                                                    } else {
+                                                        // 코스업 메뉴에서 호출된 경우 코스업 포인트로 설정
+                                                        coursePoint = point
+                                                        mapDisplayMode = "코스업"
+                                                        updateMapRotation()
+                                                    }
                                                     showPointSelectionDialog = false
-                                                    updateMapRotation()
                                                 },
                                             colors = CardDefaults.cardColors(
                                                 containerColor = if (coursePoint == point) Color.Yellow else Color.White
@@ -653,7 +694,6 @@ class MainActivity : ComponentActivity() {
                             map.uiSettings.apply {
                                 isCompassEnabled = false  // 나침반 완전히 숨김
                             }
-
                             /* ✅ 줌 제한 */
                             map.setMinZoomPreference(6.0)     // 최소 z=4
                             map.setMaxZoomPreference(22.0)    // (원하시면 더 키우거나 줄이기)
@@ -669,6 +709,8 @@ class MainActivity : ComponentActivity() {
                             /* ✅ Attribution과 Logo 숨기기 - 지도 이동 후 나타나는 원 제거 */
                             map.uiSettings.isAttributionEnabled = false
                             map.uiSettings.isLogoEnabled = false
+
+                            map.uiSettings.isFlingVelocityAnimationEnabled = false
 
                             // 목적지 마커 추가 (지도 스타일 로드 완료 후)
                             map.getStyle { style ->
@@ -696,13 +738,13 @@ class MainActivity : ComponentActivity() {
                                         currentGpsLongitude = lng
                                         isGpsAvailable = available
 
-                                        // 코스업 모드에서 위치 변경 시 선 업데이트
-                                        if (mapDisplayMode == "코스업" && coursePoint != null) {
+                                        // 항해 선 업데이트 (모든 모드에서 navigationPoint가 있으면)
+                                        if (navigationPoint != null) {
                                             val currentLocation = locationManager?.getCurrentLocationObject()
                                             if (currentLocation != null) {
                                                 val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
-                                                val pointLatLng = LatLng(coursePoint!!.latitude, coursePoint!!.longitude)
-                                                PMTilesLoader.addCourseLine(map, currentLatLng, pointLatLng)
+                                                val navigationLatLng = LatLng(navigationPoint!!.latitude, navigationPoint!!.longitude)
+                                                PMTilesLoader.addNavigationLine(map, currentLatLng, navigationLatLng)
                                             }
                                         }
                                     },
@@ -809,10 +851,68 @@ class MainActivity : ComponentActivity() {
                         cursorScreenPosition = cursorScreenPosition,
                         onTouchEnd = { latLng, screenPoint ->
                             Log.d("[MainActivity]", "터치 이벤트 발생: ${latLng.latitude}, ${latLng.longitude}")
-                            // 터치 종료 시 커서 표시
+                            
+                            // 이전 Handler 정리 (중요!)
+                            mapStabilityRunnable?.let { runnable ->
+                                mapStabilityHandler?.removeCallbacks(runnable)
+                            }
+                            
+                            // 터치 종료 시 커서 표시 (임시 위치)
                             cursorLatLng = latLng
                             cursorScreenPosition = screenPoint
                             showCursor = true
+                            
+                            // 관성 이동이 완전히 멈춘 후 터치 위치의 실제 GPS 좌표로 커서 업데이트
+                            mapStabilityHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                            var previousCameraTarget: LatLng? = null
+                            var stableCount = 0
+                            
+                            mapStabilityRunnable = object : Runnable {
+                                override fun run() {
+                                    mapLibreMap?.let { map ->
+                                        val currentCameraTarget = map.cameraPosition.target
+                                        
+                                        if (previousCameraTarget != null && currentCameraTarget != null) {
+                                            val prevTarget = previousCameraTarget!!
+                                            // 이전 위치와 현재 위치의 거리 계산
+                                            val distance = calculateDistance(
+                                                prevTarget.latitude, 
+                                                prevTarget.longitude,
+                                                currentCameraTarget.latitude, 
+                                                currentCameraTarget.longitude
+                                            )
+                                            
+                                            if (distance < 0.00001) { // 매우 작은 거리 (약 1m)
+                                                stableCount++
+                                                if (stableCount >= 3) { // 3번 연속으로 안정적이면
+                                                    // 지도가 멈춘 상태 - 터치 위치의 실제 GPS 좌표로 커서 업데이트
+                                                    val finalLatLng = map.projection.fromScreenLocation(screenPoint)
+                                                    val finalScreenPoint = map.projection.toScreenLocation(finalLatLng)
+                                                    cursorLatLng = finalLatLng
+                                                    cursorScreenPosition = finalScreenPoint
+                                                    
+                                                    Log.d("[MainActivity]", "지도 이동 완료 - 터치 위치의 실제 GPS 좌표: ${finalLatLng.latitude}, ${finalLatLng.longitude}")
+                                                    return@let // 업데이트 중지
+                                                }
+                                            } else {
+                                                stableCount = 0 // 움직임이 있으면 카운트 리셋
+                                            }
+                                        }
+                                        
+                                        previousCameraTarget = currentCameraTarget
+                                        mapStabilityHandler?.postDelayed(this, 100) // 100ms마다 체크
+                                    }
+                                }
+                            }
+                            mapStabilityHandler?.post(mapStabilityRunnable!!)
+                            
+                            // 최대 3초 후 강제 중지
+                            mapStabilityHandler?.postDelayed({
+                                mapStabilityRunnable?.let { runnable ->
+                                    mapStabilityHandler?.removeCallbacks(runnable)
+                                }
+                                Log.d("[MainActivity]", "지도 이동 감지 완료")
+                            }, 3000)
                         },
                         onTouchStart = {
                             // 터치 시작 시 커서 숨김
@@ -856,6 +956,82 @@ class MainActivity : ComponentActivity() {
                                         imageVector = Icons.Filled.Flag,
                                         contentDescription = "포인트 추가",
                                         modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                
+                                // 항해 버튼 (커서가 표시될 때만 보임)
+                                FloatingActionButton(
+                                    onClick = { 
+                                        // 커서 위치를 항해 목적지로 설정 (코스업 모드로 전환하지 않음)
+                                        cursorLatLng?.let { latLng ->
+                                            // 기존 항해 선과 마커 제거
+                                            mapLibreMap?.let { map ->
+                                                PMTilesLoader.removeNavigationLine(map)
+                                                PMTilesLoader.removeNavigationMarker(map)
+                                            }
+                                            
+                                            navigationPoint = SavedPoint(
+                                                name = "커서 위치",
+                                                latitude = latLng.latitude,
+                                                longitude = latLng.longitude,
+                                                color = Color.Blue,
+                                                iconType = "circle",
+                                                timestamp = System.currentTimeMillis()
+                                            )
+                                            
+                                            // 즉시 항해 선 표시
+                                            val currentLocation = locationManager?.getCurrentLocationObject()
+                                            val map = mapLibreMap
+                                            if (currentLocation != null && map != null) {
+                                                val currentLatLng = LatLng(currentLocation.latitude, currentLocation.longitude)
+                                                val navigationLatLng = LatLng(latLng.latitude, latLng.longitude)
+                                                PMTilesLoader.addNavigationLine(map, currentLatLng, navigationLatLng)
+                                            }
+                                            
+                                            // 커서 위치에 임시 포인트 마커 표시
+                                            val mapForMarker = mapLibreMap
+                                            if (mapForMarker != null) {
+                                                PMTilesLoader.addNavigationMarker(mapForMarker, latLng, "커서 위치")
+                                            }
+                                            
+                                            // 코스업 모드가 켜져 있다면 새로운 커서 위치로 코스업 적용
+                                            if (mapDisplayMode == "코스업") {
+                                                coursePoint = navigationPoint
+                                                updateMapRotation()
+                                                
+                                                // 커서를 목적지 위치로 이동
+                                                cursorLatLng = latLng
+                                                val screenPoint = mapLibreMap?.projection?.toScreenLocation(latLng)
+                                                if (screenPoint != null) {
+                                                    cursorScreenPosition = screenPoint
+                                                }
+                                                
+                                                Log.d("[MainActivity]", "커서 위치 변경으로 코스업 재적용: ${latLng.latitude}, ${latLng.longitude}")
+                                            }
+                                            
+                                            Log.d("[MainActivity]", "커서 위치를 항해 목적지로 설정: ${latLng.latitude}, ${latLng.longitude}")
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = Color(0xC6007ACC), // 파란색
+                                    contentColor = Color.White,
+                                    elevation = FloatingActionButtonDefaults.elevation(
+                                        defaultElevation = 0.dp,
+                                        pressedElevation = 0.dp,
+                                        focusedElevation = 0.dp,
+                                        hoveredElevation = 0.dp
+                                    ),
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .border(
+                                            width = 1.dp,
+                                            color = Color.White,
+                                            shape = RoundedCornerShape(16.dp)
+                                        ),
+                                ) {
+                                    Text(
+                                        text = "🧭",
+                                        fontSize = 20.sp
                                     )
                                 }
                             }
@@ -1076,6 +1252,18 @@ class MainActivity : ComponentActivity() {
                                         )
                                         
                                         Text(
+                                            "항해", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = "navigation"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
                                             "AIS", 
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -1127,6 +1315,68 @@ class MainActivity : ComponentActivity() {
                                                 },
                                             color = Color.White
                                         )
+                                    }
+                                    
+                                    // 항해 메뉴
+                                    if (currentMenu == "navigation") {
+                                        Text(
+                                            "항해 시작", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    if (savedPoints.isNotEmpty()) {
+                                                        showPointSelectionDialog = true
+                                                    } else {
+                                                        Log.d("[MainActivity]", "저장된 포인트가 없어서 항해를 시작할 수 없습니다.")
+                                                    }
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "목적지 변경", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    if (savedPoints.isNotEmpty()) {
+                                                        showPointSelectionDialog = true
+                                                    } else {
+                                                        Log.d("[MainActivity]", "저장된 포인트가 없어서 목적지를 변경할 수 없습니다.")
+                                                    }
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "항해 중지", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    mapDisplayMode = "노스업"
+                                                    coursePoint = null
+                                                    navigationPoint = null
+                                                    // 항해 선 및 마커 제거
+                                                    mapLibreMap?.let { map ->
+                                                        PMTilesLoader.removeNavigationLine(map)
+                                                        PMTilesLoader.removeNavigationMarker(map)
+                                                    }
+                                                    currentMenu = "main"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        // 현재 항해 상태 표시
+                                        if (mapDisplayMode == "코스업" && (coursePoint != null || navigationPoint != null)) {
+                                            Text(
+                                                text = "항해 중: ${coursePoint?.name ?: navigationPoint?.name ?: "커서 위치"}",
+                                                fontSize = 14.sp,
+                                                color = Color.Yellow,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            )
+                                        }
                                     }
                                     
                                     // 포인트 메뉴
@@ -1253,14 +1503,21 @@ class MainActivity : ComponentActivity() {
                                                 .padding(vertical = 8.dp)
                                                 .clickable { 
                                                     Log.d("[MainActivity]", "지도 표시 모드 변경: ${mapDisplayMode} -> 코스업")
-                                                    mapDisplayMode = "코스업"
-                                                    // 포인트 목록에서 선택하도록 변경
-                                                    val savedPoints = loadPointsFromLocal()
-                                                    if (savedPoints.isNotEmpty()) {
-                                                        showPointSelectionDialog = true
+                                                    
+                                                    // 항해 포인트가 있으면 그것을 코스업으로 사용
+                                                    if (navigationPoint != null) {
+                                                        coursePoint = navigationPoint
+                                                        mapDisplayMode = "코스업"
+                                                        updateMapRotation()
+                                                        Log.d("[MainActivity]", "항해 포인트를 코스업으로 적용: ${coursePoint!!.name}")
                                                     } else {
-                                                        // 포인트가 없으면 포인트 생성 안내
-                                                        android.util.Log.d("[MainActivity]", "코스업을 위해 포인트를 먼저 생성하세요")
+                                                        // 항해 포인트가 없으면 포인트 목록에서 선택
+                                                        val savedPoints = loadPointsFromLocal()
+                                                        if (savedPoints.isNotEmpty()) {
+                                                            showPointSelectionDialog = true
+                                                        } else {
+                                                            android.util.Log.d("[MainActivity]", "코스업을 위해 포인트를 먼저 생성하세요")
+                                                        }
                                                     }
                                                     showMenu = false
                                                     currentMenu = "main" // 메뉴 닫을 때 초기화
@@ -1268,23 +1525,6 @@ class MainActivity : ComponentActivity() {
                                             color = if (mapDisplayMode == "코스업") Color.Yellow else Color.White
                                         )
                                         
-                                        if (mapDisplayMode == "코스업") {
-                                            Text(
-                                                "포인트 변경", 
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                .padding(vertical = 8.dp)
-                                                    .clickable { 
-                                                        showMenu = false
-                                                    currentMenu = "main" // 메뉴 닫을 때 초기화
-                                                        val savedPoints = loadPointsFromLocal()
-                                                        if (savedPoints.isNotEmpty()) {
-                                                            showPointSelectionDialog = true
-                                                        }
-                                                    },
-                                                color = Color.White
-                                            )
-                                        }
                                     }
                                     
                                 }
@@ -1493,7 +1733,96 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     
-                    // GPS 좌표와 지도 모드 통합 표시 (좌측하단)
+                    // 좌측 상단: 현재 GPS, COG, 화면표시 모드 (텍스트만)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .padding(start = 16.dp, top = 66.dp),
+                        contentAlignment = Alignment.TopStart
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // GPS 좌표
+                            if (isGpsAvailable) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = "위도",
+                                        color = Color.Black,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = String.format("%.6f", currentGpsLatitude),
+                                        color = Color.Black,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = "경도",
+                                        color = Color.Black,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = String.format("%.6f", currentGpsLongitude),
+                                        color = Color.Black,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = "GPS 신호 없음",
+                                    color = Color.Black,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            // COG
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "COG",
+                                    color = Color.Black,
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    text = "${String.format("%.1f", currentShipCog)}°",
+                                    color = Color.Black,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            // 화면표시 모드
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "모드",
+                                    color = Color.Black,
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    text = mapDisplayMode,
+                                    color = Color.Black,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    
+                    // 좌측 하단: 커서 GPS 좌표 (회색 영역)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1501,65 +1830,31 @@ class MainActivity : ComponentActivity() {
                             .padding(16.dp),
                         contentAlignment = Alignment.BottomStart
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    Color.DarkGray.copy(alpha = 0.7f),
-                                    RoundedCornerShape(8.dp)
-                                )
-                                .padding(12.dp)
-                        ) {
-                            Column {
-                                // GPS 좌표
-                                Text(
-                                    text = "GPS 좌표",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                if (isGpsAvailable) {
+                        if (showCursor && cursorLatLng != null) {
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        Color.DarkGray.copy(alpha = 0.7f),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .padding(12.dp)
+                            ) {
+                                Column {
                                     Text(
-                                        text = "위도: ${String.format("%.6f", currentGpsLatitude)}",
+                                        text = "커서 GPS",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "위도: ${String.format("%.6f", cursorLatLng!!.latitude)}",
                                         color = Color.White,
                                         fontSize = 11.sp
                                     )
                                     Text(
-                                        text = "경도: ${String.format("%.6f", currentGpsLongitude)}",
+                                        text = "경도: ${String.format("%.6f", cursorLatLng!!.longitude)}",
                                         color = Color.White,
                                         fontSize = 11.sp
-                                    )
-                                    Text(
-                                        text = "COG: ${String.format("%.1f", currentShipCog)}°",
-                                        color = Color.White,
-                                        fontSize = 11.sp
-                                    )
-                                } else {
-                                    Text(
-                                        text = "GPS 신호 없음",
-                                        color = Color.White,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                                
-                                Spacer(modifier = Modifier.height(8.dp))
-                                
-                                // 지도 표시 모드
-                                Text(
-                                    text = "지도 모드",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = mapDisplayMode,
-                                    color = Color.Yellow,
-                                    fontSize = 11.sp
-                                )
-                                if (mapDisplayMode == "코스업" && coursePoint != null) {
-                                    Text(
-                                        text = "포인트 설정됨: ${coursePoint!!.name}",
-                                        color = Color.Green,
-                                        fontSize = 10.sp
                                     )
                                 }
                             }
