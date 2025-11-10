@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.Button
+import androidx.compose.material3.Switch
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
@@ -147,6 +148,7 @@ class MainActivity : ComponentActivity() {
     // 헬퍼들
     private lateinit var pointHelper: PointHelper
     private lateinit var destinationHelper: DestinationHelper
+    private lateinit var trackManager: TrackManager
     private var isMapInitialized by mutableStateOf(false)
     private var centerCoordinates by mutableStateOf("")
     private var pointName by mutableStateOf("")
@@ -191,6 +193,22 @@ class MainActivity : ComponentActivity() {
     private var zoomHandler: android.os.Handler? = null
     private var zoomRunnable: Runnable? = null
     private var popupPosition by mutableStateOf<android.graphics.PointF?>(null)
+    
+    // 항적 관련
+    private var currentRecordingTrack: Track? = null
+    private var isRecordingTrack by mutableStateOf(false)
+    private var trackRecordingStartTime: Long = 0
+    private var trackPoints = mutableListOf<TrackPoint>()
+    private var lastTrackPointTime: Long = 0
+    private var lastTrackPointLocation: LatLng? = null
+    private var showTrackSettingsDialog by mutableStateOf(false)
+    private var showTrackListDialog by mutableStateOf(false)
+    private var showTrackRecordListDialog by mutableStateOf(false)
+    private var selectedTrackForRecords: Track? = null
+    private var highlightedTrackRecord: Pair<String, String>? = null // (trackId, recordId) 하이라이트된 항적 기록
+    private var trackTimerHandler: android.os.Handler? = null
+    private var trackTimerRunnable: Runnable? = null
+    private var lastGpsLocation: LatLng? = null // 마지막 GPS 위치 저장
 
     // 줌 함수들
     private fun startContinuousZoomIn() {
@@ -300,6 +318,188 @@ class MainActivity : ComponentActivity() {
         map: MapLibreMap
     ): Double {
         return DistanceCalculator.calculateScreenDistance(clickLatLng, targetLatLng, map)
+    }
+    
+    // 항적 기록 시작
+    private fun startTrackRecording(track: Track) {
+        currentRecordingTrack = track
+        isRecordingTrack = true
+        trackRecordingStartTime = System.currentTimeMillis()
+        trackPoints.clear()
+        lastTrackPointTime = 0
+        lastTrackPointLocation = null
+        lastGpsLocation = null
+        
+        // 시간 간격 설정인 경우 타이머 시작
+        val settings = trackManager.settings
+        if (settings.intervalType == "time") {
+            trackTimerHandler = android.os.Handler(android.os.Looper.getMainLooper())
+            trackTimerRunnable = object : Runnable {
+                override fun run() {
+                    if (isRecordingTrack && lastGpsLocation != null) {
+                        // 마지막 GPS 위치를 항적 점으로 추가
+                        val currentTime = System.currentTimeMillis()
+                        trackPoints.add(TrackPoint(
+                            lastGpsLocation!!.latitude,
+                            lastGpsLocation!!.longitude,
+                            currentTime
+                        ))
+                        lastTrackPointTime = currentTime
+                        lastTrackPointLocation = lastGpsLocation
+                        
+                        // 실시간 항적 표시 업데이트
+                        updateCurrentTrackDisplay()
+                        
+                        // 다음 타이머 예약
+                        trackTimerHandler?.postDelayed(this, settings.timeInterval)
+                    }
+                }
+            }
+            // 첫 번째 점은 즉시 추가하지 않고, GPS 업데이트를 기다림
+            // 타이머는 GPS 위치가 업데이트된 후 시작
+        }
+        
+        Log.d("[MainActivity]", "항적 기록 시작: ${track.name} (간격: ${if (settings.intervalType == "time") "${settings.timeInterval}ms" else "${settings.distanceInterval}m"})")
+    }
+    
+    // 항적 기록 중지
+    private fun stopTrackRecording() {
+        if (!isRecordingTrack || currentRecordingTrack == null) return
+        
+        // 타이머 정지
+        trackTimerRunnable?.let { runnable ->
+            trackTimerHandler?.removeCallbacks(runnable)
+        }
+        trackTimerHandler = null
+        trackTimerRunnable = null
+        
+        val endTime = System.currentTimeMillis()
+        if (trackPoints.isNotEmpty()) {
+            trackManager.addTrackRecord(
+                trackId = currentRecordingTrack!!.id,
+                startTime = trackRecordingStartTime,
+                endTime = endTime,
+                points = trackPoints.toList()
+            )
+            Log.d("[MainActivity]", "항적 기록 저장 완료: ${trackPoints.size}개 점")
+            
+            // 항적 표시 업데이트
+            updateTrackDisplay()
+        }
+        
+        currentRecordingTrack = null
+        isRecordingTrack = false
+        trackPoints.clear()
+        lastGpsLocation = null
+        Log.d("[MainActivity]", "항적 기록 중지")
+    }
+    
+    // GPS 위치 업데이트 시 항적 점 추가
+    private fun addTrackPointIfNeeded(latitude: Double, longitude: Double) {
+        if (!isRecordingTrack || currentRecordingTrack == null) return
+        
+        val currentTime = System.currentTimeMillis()
+        val currentLocation = LatLng(latitude, longitude)
+        val settings = trackManager.settings
+        
+        // 마지막 GPS 위치 업데이트
+        lastGpsLocation = currentLocation
+        
+        when (settings.intervalType) {
+            "time" -> {
+                // 시간 간격 기준: 타이머가 처리하므로 여기서는 첫 번째 점만 추가하고 타이머 시작
+                if (lastTrackPointTime == 0L) {
+                    // 첫 번째 점 추가
+                    trackPoints.add(TrackPoint(latitude, longitude, currentTime))
+                    lastTrackPointTime = currentTime
+                    lastTrackPointLocation = currentLocation
+                    
+                    // 타이머 시작 (설정한 시간 간격마다 점 추가)
+                    trackTimerRunnable?.let { runnable ->
+                        trackTimerHandler?.postDelayed(runnable, settings.timeInterval)
+                    }
+                    
+                    // 실시간 항적 표시 업데이트
+                    updateCurrentTrackDisplay()
+                }
+                // 이후 점들은 타이머가 추가함
+            }
+            "distance" -> {
+                // 거리 간격 기준: GPS 업데이트마다 거리 체크
+                var shouldAddPoint = false
+                
+                if (lastTrackPointLocation == null) {
+                    // 첫 번째 점
+                    shouldAddPoint = true
+                } else {
+                    val distance = calculateDistance(
+                        lastTrackPointLocation!!.latitude,
+                        lastTrackPointLocation!!.longitude,
+                        latitude,
+                        longitude
+                    )
+                    if (distance >= settings.distanceInterval) {
+                        shouldAddPoint = true
+                    }
+                }
+                
+                if (shouldAddPoint) {
+                    trackPoints.add(TrackPoint(latitude, longitude, currentTime))
+                    lastTrackPointTime = currentTime
+                    lastTrackPointLocation = currentLocation
+                    
+                    // 실시간으로 항적 표시 업데이트
+                    updateCurrentTrackDisplay()
+                }
+            }
+        }
+    }
+    
+    // 현재 기록 중인 항적 표시 업데이트
+    private fun updateCurrentTrackDisplay() {
+        if (trackPoints.isEmpty() || currentRecordingTrack == null) return
+        
+        mapLibreMap?.let { map ->
+            val points = trackPoints.map { LatLng(it.latitude, it.longitude) }
+            PMTilesLoader.addTrackLine(
+                map,
+                "current_track",
+                points,
+                currentRecordingTrack!!.color
+            )
+        }
+    }
+    
+    // 모든 항적 표시 업데이트
+    private fun updateTrackDisplay() {
+        mapLibreMap?.let { map ->
+            // 기존 항적 제거
+            PMTilesLoader.removeAllTracks(map)
+            
+            // 모든 항적 표시
+            trackManager.getTracks().forEach { track ->
+                if (track.isVisible) {
+                    track.records.forEach { record ->
+                        val points = record.points.map { LatLng(it.latitude, it.longitude) }
+                        val isHighlighted = highlightedTrackRecord != null && 
+                                           highlightedTrackRecord!!.first == track.id && 
+                                           highlightedTrackRecord!!.second == record.id
+                        PMTilesLoader.addTrackLine(
+                            map,
+                            "track_${track.id}_${record.id}",
+                            points,
+                            track.color,
+                            isHighlighted
+                        )
+                    }
+                }
+            }
+            
+            // 현재 기록 중인 항적도 표시
+            if (isRecordingTrack && currentRecordingTrack != null) {
+                updateCurrentTrackDisplay()
+            }
+        }
     }
 
     // 지도 회전 제어 함수
@@ -423,6 +623,7 @@ class MainActivity : ComponentActivity() {
 
         // 헬퍼들 초기화
         pointHelper = PointHelper(this)
+        trackManager = TrackManager(this)
 
         // SharedPreferences 초기화
         sharedPreferences = getSharedPreferences("chart_plotter_points", Context.MODE_PRIVATE)
@@ -581,6 +782,349 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                // 항적 설정 다이얼로그
+                if (showTrackSettingsDialog) {
+                    var intervalType by remember { mutableStateOf(trackManager.settings.intervalType) }
+                    var timeInterval by remember { mutableStateOf(trackManager.settings.timeInterval.toString()) }
+                    var distanceInterval by remember { mutableStateOf(trackManager.settings.distanceInterval.toString()) }
+                    
+                    AlertDialog(
+                        onDismissRequest = { showTrackSettingsDialog = false },
+                        title = { Text("항적 설정") },
+                        text = {
+                            Column {
+                                Text("기록 간격 설정:", fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                // 시간 간격 선택
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    androidx.compose.material3.RadioButton(
+                                        selected = intervalType == "time",
+                                        onClick = { intervalType = "time" }
+                                    )
+                                    Text("시간 간격", modifier = Modifier.clickable { intervalType = "time" })
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    if (intervalType == "time") {
+                                        TextField(
+                                            value = timeInterval,
+                                            onValueChange = { timeInterval = it },
+                                            label = { Text("밀리초") },
+                                            modifier = Modifier.width(120.dp)
+                                        )
+                                    }
+                                }
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                // 거리 간격 선택
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    androidx.compose.material3.RadioButton(
+                                        selected = intervalType == "distance",
+                                        onClick = { intervalType = "distance" }
+                                    )
+                                    Text("거리 간격", modifier = Modifier.clickable { intervalType = "distance" })
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    if (intervalType == "distance") {
+                                        TextField(
+                                            value = distanceInterval,
+                                            onValueChange = { distanceInterval = it },
+                                            label = { Text("미터") },
+                                            modifier = Modifier.width(120.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    val settings = TrackSettings(
+                                        intervalType = intervalType,
+                                        timeInterval = if (intervalType == "time") timeInterval.toLongOrNull() ?: 5000L else trackManager.settings.timeInterval,
+                                        distanceInterval = if (intervalType == "distance") distanceInterval.toDoubleOrNull() ?: 10.0 else trackManager.settings.distanceInterval
+                                    )
+                                    trackManager.saveSettings(settings)
+                                    showTrackSettingsDialog = false
+                                }
+                            ) {
+                                Text("저장")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = { showTrackSettingsDialog = false }
+                            ) {
+                                Text("취소")
+                            }
+                        }
+                    )
+                }
+                
+                // 항적 목록 다이얼로그
+                if (showTrackListDialog) {
+                    var newTrackName by remember { mutableStateOf("") }
+                    var newTrackColor by remember { mutableStateOf(Color.Red) }
+                    var showNewTrackDialog by remember { mutableStateOf(false) }
+                    
+                    AlertDialog(
+                        onDismissRequest = { showTrackListDialog = false },
+                        title = { Text("항적 목록") },
+                        text = {
+                            Column {
+                                // 새 항적 추가 버튼
+                                Button(
+                                    onClick = { showNewTrackDialog = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("새 항적 추가")
+                                }
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                // 항적 목록
+                                LazyColumn {
+                                    items(trackManager.getTracks()) { track ->
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = if (track.isVisible) track.color.copy(alpha = 0.3f) else Color.Gray.copy(alpha = 0.2f)
+                                            )
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column {
+                                                        Text(
+                                                            text = track.name,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White
+                                                        )
+                                                        Text(
+                                                            text = "기록 ${track.records.size}개",
+                                                            fontSize = 12.sp,
+                                                            color = Color.White
+                                                        )
+                                                    }
+                                                    
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        // 표시/숨김 스위치
+                                                        Switch(
+                                                            checked = track.isVisible,
+                                                            onCheckedChange = {
+                                                                trackManager.setTrackVisibility(track.id, it)
+                                                                updateTrackDisplay()
+                                                            }
+                                                        )
+                                                        
+                                                        // 기록 시작 버튼
+                                                        if (!isRecordingTrack) {
+                                                            TextButton(
+                                                                onClick = {
+                                                                    startTrackRecording(track)
+                                                                    showTrackListDialog = false
+                                                                }
+                                                            ) {
+                                                                Text("기록", fontSize = 12.sp)
+                                                            }
+                                                        }
+                                                        
+                                                        // 삭제 버튼
+                                                        TextButton(
+                                                            onClick = {
+                                                                trackManager.deleteTrack(track.id)
+                                                                updateTrackDisplay()
+                                                            }
+                                                        ) {
+                                                            Text("삭제", fontSize = 12.sp, color = Color.Red)
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                // 항적 기록 목록
+                                                if (track.records.isNotEmpty()) {
+                                                    Spacer(modifier = Modifier.height(4.dp))
+                                                    track.records.forEach { record ->
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(vertical = 2.dp),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = record.title,
+                                                                fontSize = 11.sp,
+                                                                color = Color.White
+                                                            )
+                                                            TextButton(
+                                                                onClick = {
+                                                                    // 하이라이트 처리
+                                                                    highlightedTrackRecord = Pair(track.id, record.id)
+                                                                    updateTrackDisplay()
+                                                                    selectedTrackForRecords = track
+                                                                    showTrackRecordListDialog = true
+                                                                }
+                                                            ) {
+                                                                Text("보기", fontSize = 10.sp)
+                                                            }
+                                                            TextButton(
+                                                                onClick = {
+                                                                    trackManager.deleteTrackRecord(track.id, record.id)
+                                                                    updateTrackDisplay()
+                                                                }
+                                                            ) {
+                                                                Text("삭제", fontSize = 10.sp, color = Color.Red)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = { showTrackListDialog = false }
+                            ) {
+                                Text("닫기")
+                            }
+                        }
+                    )
+                    
+                    // 새 항적 추가 다이얼로그
+                    if (showNewTrackDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showNewTrackDialog = false },
+                            title = { Text("새 항적 추가") },
+                            text = {
+                                Column {
+                                    TextField(
+                                        value = newTrackName,
+                                        onValueChange = { newTrackName = it },
+                                        label = { Text("항적 이름") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("색상 선택:")
+                                    Row {
+                                        listOf(Color.Red, Color.Blue, Color.Green, Color.Yellow, Color.Cyan, Color.Magenta).forEach { color ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .background(color, CircleShape)
+                                                    .clickable { newTrackColor = color }
+                                                    .padding(4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        if (newTrackName.isNotBlank()) {
+                                            trackManager.addTrack(newTrackName, newTrackColor)
+                                            newTrackName = ""
+                                            newTrackColor = Color.Red
+                                            showNewTrackDialog = false
+                                        }
+                                    }
+                                ) {
+                                    Text("추가")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(
+                                    onClick = { showNewTrackDialog = false }
+                                ) {
+                                    Text("취소")
+                                }
+                            }
+                        )
+                    }
+                }
+                
+                // 항적 기록 목록 다이얼로그
+                if (showTrackRecordListDialog && selectedTrackForRecords != null) {
+                    AlertDialog(
+                        onDismissRequest = { 
+                            showTrackRecordListDialog = false
+                            selectedTrackForRecords = null
+                        },
+                        title = { Text("${selectedTrackForRecords!!.name} - 항적 기록") },
+                        text = {
+                            LazyColumn {
+                                items(selectedTrackForRecords!!.records) { record ->
+                                    val isHighlighted = highlightedTrackRecord != null && 
+                                                       highlightedTrackRecord!!.first == selectedTrackForRecords!!.id && 
+                                                       highlightedTrackRecord!!.second == record.id
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
+                                            .clickable {
+                                                // 하이라이트 처리
+                                                highlightedTrackRecord = Pair(selectedTrackForRecords!!.id, record.id)
+                                                updateTrackDisplay()
+                                            },
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isHighlighted) {
+                                                Color.Yellow.copy(alpha = 0.5f) // 하이라이트된 경우 노란색 배경
+                                            } else {
+                                                selectedTrackForRecords!!.color.copy(alpha = 0.3f)
+                                            }
+                                        )
+                                    ) {
+                                        Column(modifier = Modifier.padding(8.dp)) {
+                                            Text(
+                                                text = record.title,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
+                                            Text(
+                                                text = "점 ${record.points.size}개",
+                                                fontSize = 12.sp,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Row {
+                                TextButton(
+                                    onClick = { 
+                                        // 하이라이트 해제
+                                        highlightedTrackRecord = null
+                                        updateTrackDisplay()
+                                    }
+                                ) {
+                                    Text("하이라이트 해제")
+                                }
+                                TextButton(
+                                    onClick = { 
+                                        showTrackRecordListDialog = false
+                                        selectedTrackForRecords = null
+                                    }
+                                ) {
+                                    Text("닫기")
+                                }
+                            }
+                        }
+                    )
+                }
+                
                 // 포인트 선택 다이얼로그 (코스업용)
                 if (showPointSelectionDialog) {
                     AlertDialog(
@@ -717,6 +1261,9 @@ class MainActivity : ComponentActivity() {
                                 // 약간의 지연을 두고 마커 추가 (스타일 완전 로드 대기)
                                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                                     // 목적지 마커는 더 이상 사용하지 않음
+                                    
+                                    // 항적 표시
+                                    updateTrackDisplay()
                                 }, 500) // 0.5초 지연
                             }
 
@@ -737,6 +1284,9 @@ class MainActivity : ComponentActivity() {
                                         currentGpsLatitude = lat
                                         currentGpsLongitude = lng
                                         isGpsAvailable = available
+
+                                        // 항적 기록 점 추가
+                                        addTrackPointIfNeeded(lat, lng)
 
                                         // 항해 선 업데이트 (모든 모드에서 navigationPoint가 있으면)
                                         if (navigationPoint != null) {
@@ -1264,6 +1814,18 @@ class MainActivity : ComponentActivity() {
                                         )
                                         
                                         Text(
+                                            "항적", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    currentMenu = "track"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
                                             "AIS", 
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -1372,6 +1934,58 @@ class MainActivity : ComponentActivity() {
                                         if (mapDisplayMode == "코스업" && (coursePoint != null || navigationPoint != null)) {
                                             Text(
                                                 text = "항해 중: ${coursePoint?.name ?: navigationPoint?.name ?: "커서 위치"}",
+                                                fontSize = 14.sp,
+                                                color = Color.Yellow,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            )
+                                        }
+                                    }
+                                    
+                                    // 항적 메뉴
+                                    if (currentMenu == "track") {
+                                        Text(
+                                            "항적 설정", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showTrackSettingsDialog = true
+                                                    showMenu = false
+                                                    currentMenu = "main"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        Text(
+                                            "항적 목록", 
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                                .clickable { 
+                                                    showTrackListDialog = true
+                                                    showMenu = false
+                                                    currentMenu = "main"
+                                                },
+                                            color = Color.White
+                                        )
+                                        
+                                        // 현재 기록 중인 항적이 있으면 중지 버튼 표시
+                                        if (isRecordingTrack && currentRecordingTrack != null) {
+                                            Text(
+                                                "항적 기록 중지", 
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 8.dp)
+                                                    .clickable { 
+                                                        stopTrackRecording()
+                                                        showMenu = false
+                                                        currentMenu = "main"
+                                                    },
+                                                color = Color.Red
+                                            )
+                                            
+                                            Text(
+                                                text = "기록 중: ${currentRecordingTrack!!.name}",
                                                 fontSize = 14.sp,
                                                 color = Color.Yellow,
                                                 modifier = Modifier.padding(vertical = 8.dp)

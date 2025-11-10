@@ -889,5 +889,133 @@ object PMTilesLoader {
             }
         }
     }
+    
+    /**
+     * 항적 선을 추가합니다
+     */
+    fun addTrackLine(map: MapLibreMap, sourceId: String, points: List<LatLng>, color: androidx.compose.ui.graphics.Color, isHighlighted: Boolean = false) {
+        if (points.size < 2) return
+        
+        map.getStyle { style ->
+            try {
+                // GeoJSON LineString 생성
+                val coordinates = points.map { listOf(it.longitude, it.latitude) }
+                val lineString = org.json.JSONObject().apply {
+                    put("type", "LineString")
+                    put("coordinates", org.json.JSONArray(coordinates))
+                }
+                val feature = org.json.JSONObject().apply {
+                    put("type", "Feature")
+                    put("geometry", lineString)
+                }
+                val featureCollection = org.json.JSONObject().apply {
+                    put("type", "FeatureCollection")
+                    put("features", org.json.JSONArray(listOf(feature)))
+                }
+                
+                // 기존 소스가 있으면 제거
+                if (style.getSource(sourceId) != null) {
+                    style.removeSource(sourceId)
+                }
+                if (style.getLayer("${sourceId}_layer") != null) {
+                    style.removeLayer("${sourceId}_layer")
+                }
+                
+                // GeoJsonSource 추가
+                val source = GeoJsonSource(sourceId, featureCollection.toString())
+                style.addSource(source)
+                
+                // 하이라이트 여부에 따라 선 두께와 색상 조정
+                val lineWidth = if (isHighlighted) 5.0f else 2.0f
+                val lineOpacity = if (isHighlighted) 1.0f else 0.8f
+                
+                // 하이라이트된 경우 흰색 테두리 효과를 위해 두 개의 레이어 사용
+                if (isHighlighted) {
+                    // 배경 레이어 (흰색, 더 두껍게)
+                    val backgroundLayer = LineLayer("${sourceId}_bg_layer", sourceId)
+                        .withProperties(
+                            PropertyFactory.lineColor(android.graphics.Color.WHITE),
+                            PropertyFactory.lineWidth(lineWidth + 2.0f),
+                            PropertyFactory.lineOpacity(0.6f),
+                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                        )
+                    style.addLayer(backgroundLayer)
+                }
+                
+                // 메인 레이어
+                val trackLineLayer = LineLayer("${sourceId}_layer", sourceId)
+                    .withProperties(
+                        PropertyFactory.lineColor(android.graphics.Color.rgb(
+                            (color.red * 255).toInt(),
+                            (color.green * 255).toInt(),
+                            (color.blue * 255).toInt()
+                        )),
+                        PropertyFactory.lineWidth(lineWidth),
+                        PropertyFactory.lineOpacity(lineOpacity),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                    )
+                style.addLayer(trackLineLayer)
+                
+                Log.d("[PMTilesLoader]", "항적 선 추가됨: $sourceId (${points.size}개 점, 하이라이트: $isHighlighted)")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항적 선 추가 실패: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 모든 항적 선을 제거합니다
+     */
+    fun removeAllTracks(map: MapLibreMap) {
+        map.getStyle { style ->
+            try {
+                // 모든 항적 관련 레이어와 소스 제거
+                val layersToRemove = mutableListOf<String>()
+                val sourcesToRemove = mutableListOf<String>()
+                
+                style.layers.forEach { layer ->
+                    val layerId = layer.id
+                    if (layerId.contains("track_") || layerId == "current_track_layer" || layerId.contains("_bg_layer")) {
+                        layersToRemove.add(layerId)
+                    }
+                }
+                
+                style.sources.forEach { source ->
+                    val sourceId = source.id
+                    if (sourceId.contains("track_") || sourceId == "current_track") {
+                        sourcesToRemove.add(sourceId)
+                    }
+                }
+                
+                layersToRemove.forEach { layerId ->
+                    try {
+                        if (style.getLayer(layerId) != null) {
+                            style.removeLayer(layerId)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("[PMTilesLoader]", "레이어 제거 실패: $layerId, ${e.message}")
+                    }
+                }
+                
+                sourcesToRemove.forEach { sourceId ->
+                    try {
+                        if (style.getSource(sourceId) != null) {
+                            style.removeSource(sourceId)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("[PMTilesLoader]", "소스 제거 실패: $sourceId, ${e.message}")
+                    }
+                }
+                
+                Log.d("[PMTilesLoader]", "모든 항적 제거됨")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항적 제거 실패: ${e.message}")
+            }
+        }
+    }
 }
 
