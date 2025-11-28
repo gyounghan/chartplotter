@@ -1,6 +1,7 @@
 package com.marineplay.chartplotter
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.Drawable
@@ -300,26 +301,25 @@ object PMTilesLoader {
             minZoom = 7f
             maxZoom = 32f
             
+            // FONT 속성 기반 동적 텍스트 크기
+            // FONT 형식: "24OB" (24 크기, 굵게), "110" (110 크기), "120B" (120 크기, 굵게)
+            // 기본 크기 110을 12sp로 가정하고 비례 계산
+            // toNumber()를 사용하여 문자열에서 숫자 부분만 추출 (예: "240B" -> 240)
+            val baseSize = 10f
+
             setProperties(
                 // 텍스트 필드 설정
                 PropertyFactory.textField(
-                    if (config.sourceName.contains("ad", ignoreCase = true)) {
-                        // depth가 포함된 파일: 숫자로 처리하고 "m" 단위 추가
-                        concat(
-                            toString(round(toNumber(get(config.textField)))),
-                            literal(" m")
-                        )
-                    } else {
-                        // 일반 텍스트 필드: 그대로 표시
-                        get(config.textField)
-                    }
+                    get(config.textField)
                 ),
                 PropertyFactory.textSize(
-                    interpolate(
-                        exponential(1.2f), zoom(),
-                        stop(12, 10f), stop(16, 14f), stop(20, 18f)
+                    coalesce(
+                    min(
+                        max(
+                           toNumber(get("FONT")), literal(baseSize)
+                    ), literal(15)
                     )
-                ),
+                    )),
                 PropertyFactory.textColor(
                     match(
                         toNumber(coalesce(get("COLOR"))),
@@ -332,6 +332,7 @@ object PMTilesLoader {
                 PropertyFactory.textHaloColor(Color.WHITE),
                 PropertyFactory.textHaloWidth(1.5f),
                 PropertyFactory.textAllowOverlap(false),
+                PropertyFactory.textAllowOverlap(true), 
                 PropertyFactory.textIgnorePlacement(false)
             )
             // ✅ 레이어별 필터 분기
@@ -362,14 +363,23 @@ object PMTilesLoader {
         // 파일명에 따라 아이콘 결정
         val iconName = config.textField
         val iconId = "${iconName}-icon"
-        
+        val targetSizePx = 40
         // 1) drawable PNG를 스타일 이미지로 등록
         if (style.getImage(iconId) == null) {
             try {
                 val resourceId = context.resources.getIdentifier(iconName, "drawable", context.packageName)
                 if (resourceId != 0) {
                     val bmp = BitmapFactory.decodeResource(context.resources, resourceId)
-                    style.addImage(iconId, bmp)
+
+                    // 🌟 비트맵을 targetSizePx로 리사이즈
+                    val resizedBitmap = Bitmap.createScaledBitmap(
+                        bmp,
+                        targetSizePx,
+                        targetSizePx,
+                        true
+                    )
+
+                    style.addImage(iconId, resizedBitmap)
                     Log.d("[PMTilesLoader]", "아이콘 로드 완료: $iconName")
                 } else {
                     Log.w("[PMTilesLoader]", "아이콘 리소스를 찾을 수 없음: $iconName")
@@ -395,9 +405,10 @@ object PMTilesLoader {
                 // 확대할수록 살짝 키우기
                 iconSize(
                     interpolate(
-                        exponential(0.15f), zoom(),
-                        stop(14, 0.15f),
-                        stop(16, 0.3f)
+                        exponential(1f), zoom(),
+                        stop(10, 0.8f),
+                        stop(14, 1.0f),
+                        stop(18, 1.8f)
                     )
                 )
             )
@@ -431,7 +442,7 @@ object PMTilesLoader {
         
         // 아이콘별 스케일 비율 저장용
         val iconScaleMap = mutableMapOf<String, Float>()
-        val targetSizePx: Int = 80 // 목표 크기 (px)
+        val targetSizePx: Int = 40 // 목표 크기 (px)
         val finalIconMapping = if (iconMapping.isEmpty()) defaultIconMapping else iconMapping
         
         // 1) 모든 아이콘을 스타일에 등록 (파일 확장자에 따라 다르게 처리)
@@ -463,8 +474,15 @@ object PMTilesLoader {
                             val scale: Float = targetSizePx.toFloat() / maxDim.toFloat()
                             iconScaleMap[iconId] = scale
 
+                            val resizedBitmap = Bitmap.createScaledBitmap(
+                                bitmap,
+                                targetSizePx,
+                                targetSizePx,
+                                true // 부드럽게 스케일링
+                            )
+
 //                            style.addImage(iconId, bitmap, true)
-                             style.addImage(iconId, bitmap)
+                             style.addImage(iconId, resizedBitmap)
                             Log.d("[PMTilesLoader]", "동적 아이콘 로드 완료: $iconValue -> $drawableName (${if (drawableName.endsWith(".bmp", ignoreCase = true)) "BMP 직접 사용" else "BitmapFactory 변환"})")
                         } else {
                             Log.w("[PMTilesLoader]", "아이콘 비트맵 생성 실패: $drawableName")
@@ -662,12 +680,30 @@ object PMTilesLoader {
      * 항해 모드에서 목적지와 현재 위치를 연결하는 선을 그립니다
      */
     fun addNavigationLine(map: MapLibreMap, currentLocation: LatLng, destination: LatLng) {
+        addNavigationRoute(map, currentLocation, emptyList(), destination)
+    }
+    
+    /**
+     * 경유지를 포함한 항해 경로를 추가합니다
+     * @param currentLocation 현재 위치
+     * @param waypoints 경유지 리스트
+     * @param destination 최종 목적지
+     */
+    fun addNavigationRoute(map: MapLibreMap, currentLocation: LatLng, waypoints: List<LatLng>, destination: LatLng) {
         map.getStyle { style ->
             try {
-                // 기존 항해 선 제거
+                // 기존 항해 선 및 화살표 제거
                 removeNavigationLine(map)
                 
-                // GeoJSON LineString 생성
+                // 경로 점 리스트 생성: 현재 위치 -> 경유지들 -> 목적지
+                val routePoints = mutableListOf<LatLng>()
+                routePoints.add(currentLocation)
+                routePoints.addAll(waypoints)
+                routePoints.add(destination)
+                
+                // GeoJSON LineString 좌표 생성
+                val coordinates = routePoints.map { "[${it.longitude}, ${it.latitude}]" }.joinToString(",\n                                    ")
+                
                 val navigationLineGeoJson = """
                 {
                     "type": "FeatureCollection",
@@ -677,8 +713,7 @@ object PMTilesLoader {
                             "geometry": {
                                 "type": "LineString",
                                 "coordinates": [
-                                    [${currentLocation.longitude}, ${currentLocation.latitude}],
-                                    [${destination.longitude}, ${destination.latitude}]
+                                    $coordinates
                                 ]
                             },
                             "properties": {
@@ -704,12 +739,132 @@ object PMTilesLoader {
                     )
                 style.addLayer(navigationLineLayer)
                 
-                Log.d("[PMTilesLoader]", "항해 선 추가됨: ${currentLocation} -> ${destination}")
+                // 화살표 추가: 선을 따라 일정 간격으로 화살표 배치
+                addNavigationArrows(style, routePoints)
+                
+                Log.d("[PMTilesLoader]", "항해 경로 추가됨: 현재 위치 -> ${waypoints.size}개 경유지 -> 목적지")
                 
             } catch (e: Exception) {
-                Log.e("[PMTilesLoader]", "항해 선 추가 실패: ${e.message}")
+                Log.e("[PMTilesLoader]", "항해 경로 추가 실패: ${e.message}")
             }
         }
+    }
+    
+    /**
+     * 항해 경로에 방향 화살표를 추가합니다
+     */
+    private fun addNavigationArrows(style: Style, routePoints: List<LatLng>) {
+        try {
+            // 화살표 아이콘 생성 (간단한 삼각형 화살표)
+            val arrowBitmap = createArrowIcon()
+            style.addImage("navigation_arrow", arrowBitmap)
+            
+            // 선을 따라 화살표 포인트 생성 (각 세그먼트의 중간 지점)
+            val arrowFeatures = mutableListOf<org.json.JSONObject>()
+            
+            for (i in 0 until routePoints.size - 1) {
+                val start = routePoints[i]
+                val end = routePoints[i + 1]
+                
+                // 세그먼트의 중간 지점 계산
+                val midLat = (start.latitude + end.latitude) / 2.0
+                val midLon = (start.longitude + end.longitude) / 2.0
+                
+                // 방향(베어링) 계산
+                val bearing = calculateBearing(start.latitude, start.longitude, end.latitude, end.longitude)
+                
+                // 화살표 피처 생성
+                val arrowFeature = org.json.JSONObject().apply {
+                    put("type", "Feature")
+                    put("geometry", org.json.JSONObject().apply {
+                        put("type", "Point")
+                        put("coordinates", org.json.JSONArray(listOf(midLon, midLat)))
+                    })
+                    put("properties", org.json.JSONObject().apply {
+                        put("bearing", bearing)
+                    })
+                }
+                arrowFeatures.add(arrowFeature)
+            }
+            
+            // 화살표 소스 생성
+            val arrowFeaturesArray = org.json.JSONArray(arrowFeatures)
+            val arrowGeoJson = org.json.JSONObject().apply {
+                put("type", "FeatureCollection")
+                put("features", arrowFeaturesArray)
+            }
+            
+            // 기존 화살표 소스/레이어 제거
+            if (style.getSource("navigation_arrow_source") != null) {
+                style.removeSource("navigation_arrow_source")
+            }
+            if (style.getLayer("navigation_arrow_layer") != null) {
+                style.removeLayer("navigation_arrow_layer")
+            }
+            
+            // 화살표 소스 추가
+            val arrowSource = GeoJsonSource("navigation_arrow_source", arrowGeoJson.toString())
+            style.addSource(arrowSource)
+            
+            // 화살표 레이어 추가
+            val arrowLayer = SymbolLayer("navigation_arrow_layer", "navigation_arrow_source")
+                .withProperties(
+                    PropertyFactory.iconImage("navigation_arrow"),
+                    PropertyFactory.iconSize(0.8f),
+                    PropertyFactory.iconRotate(get("bearing")), // 방향에 따라 회전
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconIgnorePlacement(true)
+                )
+            style.addLayer(arrowLayer)
+            
+            Log.d("[PMTilesLoader]", "항해 경로 화살표 추가됨: ${arrowFeatures.size}개")
+            
+        } catch (e: Exception) {
+            Log.e("[PMTilesLoader]", "화살표 추가 실패: ${e.message}")
+        }
+    }
+    
+    /**
+     * 두 지점 간의 방향(베어링)을 계산합니다 (0~360도)
+     */
+    private fun calculateBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val lat1Rad = Math.toRadians(lat1)
+        val lat2Rad = Math.toRadians(lat2)
+        val deltaLonRad = Math.toRadians(lon2 - lon1)
+        
+        val y = Math.sin(deltaLonRad) * Math.cos(lat2Rad)
+        val x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(deltaLonRad)
+        
+        val bearingRad = Math.atan2(y, x)
+        val bearingDeg = Math.toDegrees(bearingRad)
+        
+        return ((bearingDeg % 360) + 360) % 360
+    }
+    
+    /**
+     * 화살표 아이콘을 생성합니다
+     */
+    private fun createArrowIcon(): android.graphics.Bitmap {
+        val size = 32
+        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        
+        val paint = android.graphics.Paint().apply {
+            color = Color.BLUE
+            style = android.graphics.Paint.Style.FILL
+            isAntiAlias = true
+        }
+        
+        // 위쪽을 향한 삼각형 화살표 그리기
+        val path = android.graphics.Path()
+        path.moveTo(size / 2f, 0f) // 위쪽 꼭짓점
+        path.lineTo(0f, size.toFloat()) // 왼쪽 아래
+        path.lineTo(size.toFloat(), size.toFloat()) // 오른쪽 아래
+        path.close()
+        
+        canvas.drawPath(path, paint)
+        
+        return bitmap
     }
     
     /**
@@ -728,7 +883,17 @@ object PMTilesLoader {
                     style.removeSource("navigation_line_source")
                 }
                 
-                Log.d("[PMTilesLoader]", "항해 선 제거됨")
+                // 기존 화살표 레이어 제거
+                if (style.getLayer("navigation_arrow_layer") != null) {
+                    style.removeLayer("navigation_arrow_layer")
+                }
+                
+                // 기존 화살표 소스 제거
+                if (style.getSource("navigation_arrow_source") != null) {
+                    style.removeSource("navigation_arrow_source")
+                }
+                
+                Log.d("[PMTilesLoader]", "항해 선 및 화살표 제거됨")
                 
             } catch (e: Exception) {
                 Log.e("[PMTilesLoader]", "항해 선 제거 실패: ${e.message}")

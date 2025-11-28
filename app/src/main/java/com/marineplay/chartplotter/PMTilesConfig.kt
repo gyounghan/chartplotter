@@ -124,7 +124,7 @@ object PMTilesManager {
     val pmtilesConfigs: List<PMTilesConfig>
         get() = listOf(
             PMTilesConfig(
-                fileName = "lineMapTiles.pmtiles",
+                fileName = "lineTiles.pmtiles",
                 sourceName = "lineTiles-source",
                 sourceLayer = "line_map",
                 layerType = LayerType.LINE,
@@ -264,12 +264,18 @@ object PMTilesManager {
                 textField = "VALUE"
             ),
             PMTilesConfig(
-                fileName = "wrecksTiles.pmtiles",
+                fileName = "p_wrecks.pmtiles",
                 sourceName = "wrecks-source",
                 sourceLayer = "wrecks",
                 layerType = LayerType.SYMBOL,
                 hasTextLayer = true,
-                textField = "wreck_symbol"
+                isDynamicSymbol = true,
+                iconMapping = mapOf(
+                    "wrecks1" to "wrecks1",
+                    "wrecks2" to "wrecks2",
+                    "wrecks3" to "wrecks3",
+                    "wrecks5" to "wrecks5"
+                )
             ),
             PMTilesConfig(
                 fileName = "p_wreck_159_ex.pmtiles",

@@ -74,6 +74,76 @@ class LocationManager(
     
     // 현재 위치 반환 (Location 객체)
     fun getCurrentLocationObject(): Location? = currentLocation
+    
+    /**
+     * GPS와 방향 정보 제공 여부를 확인하는 데이터 클래스
+     */
+    data class AvailabilityStatus(
+        val gpsAvailable: Boolean,           // GPS 위치 정보 제공 가능 여부
+        val gpsEnabled: Boolean,              // GPS 프로바이더 활성화 여부
+        val networkLocationEnabled: Boolean,  // 네트워크 위치 활성화 여부
+        val locationPermissionGranted: Boolean, // 위치 권한 부여 여부
+        val bearingAvailable: Boolean,        // 방향 정보 제공 가능 여부
+        val orientationSensorAvailable: Boolean, // 방향 센서 사용 가능 여부
+        val rotationVectorSensorAvailable: Boolean // 회전 벡터 센서 사용 가능 여부
+    )
+    
+    /**
+     * GPS와 방향 정보 제공 여부를 확인합니다
+     */
+    fun checkAvailability(): AvailabilityStatus {
+        // 위치 권한 확인
+        val locationPermissionGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        // GPS 프로바이더 활성화 여부
+        val gpsEnabled = try {
+            lm.isProviderEnabled(SysLocationManager.GPS_PROVIDER)
+        } catch (e: Exception) {
+            false
+        }
+        
+        // 네트워크 위치 활성화 여부
+        val networkLocationEnabled = try {
+            lm.isProviderEnabled(SysLocationManager.NETWORK_PROVIDER)
+        } catch (e: Exception) {
+            false
+        }
+        
+        // GPS 위치 정보 제공 가능 여부 (권한 + 프로바이더 활성화)
+        val gpsAvailable = locationPermissionGranted && (gpsEnabled || networkLocationEnabled)
+        
+        // 방향 센서 확인
+        val orientationSensorAvailable = sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION) != null
+        val rotationVectorSensorAvailable = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) != null
+        val hasMagnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) != null
+        val hasAccelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
+        val hasGyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
+
+        // 방향 정보 제공 가능 여부 (센서 존재 여부)
+        val bearingAvailable = orientationSensorAvailable || rotationVectorSensorAvailable
+        
+        val status = AvailabilityStatus(
+            gpsAvailable = gpsAvailable,
+            gpsEnabled = gpsEnabled,
+            networkLocationEnabled = networkLocationEnabled,
+            locationPermissionGranted = locationPermissionGranted,
+            bearingAvailable = bearingAvailable,
+            orientationSensorAvailable = orientationSensorAvailable,
+            rotationVectorSensorAvailable = rotationVectorSensorAvailable
+        )
+        
+        Log.d("[LocationManager]", "정보 제공 상태 확인:")
+        Log.d("[LocationManager]", "  GPS 제공 가능: ${status.gpsAvailable} (권한: ${status.locationPermissionGranted}, GPS: ${status.gpsEnabled}, 네트워크: ${status.networkLocationEnabled})")
+        Log.d("[LocationManager]", "  방향 정보 제공 가능: ${status.bearingAvailable} (방향 센서: ${status.orientationSensorAvailable}, 회전 벡터: ${status.rotationVectorSensorAvailable})")
+        Log.d("SensorCheck", "자기장 센서: $hasMagnetometer")
+        Log.d("SensorCheck", "가속도 센서: $hasAccelerometer")
+        Log.d("SensorCheck", "자이로 센서: $hasGyroscope")
+
+        return status
+    }
 
     private var currentLocation: Location? = null
     private var shipSource: GeoJsonSource? = null
