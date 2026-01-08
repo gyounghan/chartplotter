@@ -26,6 +26,21 @@ enum class EntryMode(val value: String) {
     BLACKBOX_ONLY("BLACKBOX_ONLY"),
     
     /**
+     * 카메라 화면만 표시
+     */
+    CAMERA_ONLY("CAMERA_ONLY"),
+    
+    /**
+     * AIS 화면만 표시
+     */
+    AIS_ONLY("AIS_ONLY"),
+    
+    /**
+     * 계기판 화면만 표시
+     */
+    DASHBOARD_ONLY("DASHBOARD_ONLY"),
+    
+    /**
      * 화면 분할 (차트 + 블랙박스)
      */
     SPLIT("SPLIT");

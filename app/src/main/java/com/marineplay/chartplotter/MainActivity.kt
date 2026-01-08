@@ -3,6 +3,7 @@ package com.marineplay.chartplotter
 import android.Manifest
 import android.R.attr
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
@@ -168,6 +169,9 @@ class MainActivity : ComponentActivity() {
     
     // ViewModel 참조 (onKeyDown에서 사용하기 위해)
     private var mainViewModel: MainViewModel? = null
+    
+    // EntryMode 저장 (뒤로가기 처리용)
+    private var currentEntryMode: EntryMode = EntryMode.CHART_ONLY
 
     // 줌 함수들
     private fun startContinuousZoomIn(viewModel: MainViewModel) {
@@ -650,9 +654,9 @@ class MainActivity : ComponentActivity() {
         // - Extra Key: ENTRY_MODE
         // - Extra Type: String (CHART_ONLY, BLACKBOX_ONLY, SPLIT)
         val entryModeString = intent.getStringExtra(EntryMode.INTENT_EXTRA_KEY)
-        val entryMode = EntryMode.fromString(entryModeString)
+        currentEntryMode = EntryMode.fromString(entryModeString)
         
-        android.util.Log.d("[MainActivity]", "ENTRY_MODE: $entryModeString -> $entryMode")
+        android.util.Log.d("[MainActivity]", "ENTRY_MODE: $entryModeString -> $currentEntryMode")
 
         @OptIn(ExperimentalMaterial3Api::class)
         setContent {
@@ -671,7 +675,7 @@ class MainActivity : ComponentActivity() {
                 
                 // ChartPlotterApp 호출 (EntryMode에 따라 화면 구성)
                 com.marineplay.chartplotter.ui.ChartPlotterApp(
-                    entryMode = entryMode,
+                    entryMode = currentEntryMode,
                     viewModel = viewModel,
                     activity = this@MainActivity,
                     pointHelper = pointHelper,
@@ -680,6 +684,23 @@ class MainActivity : ComponentActivity() {
                     onLocationManagerChange = { locationManager = it }
                 )
             }
+        }
+    }
+    
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        
+        // 새로운 Intent에서 ENTRY_MODE 읽기
+        val entryModeString = intent?.getStringExtra(EntryMode.INTENT_EXTRA_KEY)
+        val newEntryMode = EntryMode.fromString(entryModeString)
+        
+        if (newEntryMode != currentEntryMode) {
+            android.util.Log.d("[MainActivity]", "onNewIntent: ENTRY_MODE 변경 $currentEntryMode -> $newEntryMode")
+            currentEntryMode = newEntryMode
+            
+            // Activity 재생성하여 새로운 EntryMode 반영
+            recreate()
         }
     }
     
@@ -948,6 +969,18 @@ class MainActivity : ComponentActivity() {
             viewModel.updateShowEditDialog(false)
         } catch (e: Exception) {
             android.util.Log.e("[MainActivity]", "포인트 업데이트 실패: ${e.message}")
+        }
+    }
+
+    override fun onBackPressed() {
+        // CHART_ONLY 모드가 아닌 경우 (카메라, AIS, 계기판 등) 뒤로가기 시 앱 종료
+        if (currentEntryMode != EntryMode.CHART_ONLY) {
+            android.util.Log.d("[MainActivity]", "뒤로가기: $currentEntryMode 모드에서 앱 종료")
+            // finishAffinity()를 사용하여 Task 전체를 종료
+            finishAffinity()
+        } else {
+            // CHART_ONLY 모드에서는 기본 동작 (차트 화면 유지)
+            super.onBackPressed()
         }
     }
 
