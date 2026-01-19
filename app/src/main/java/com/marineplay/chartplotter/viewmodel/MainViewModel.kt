@@ -14,6 +14,8 @@ import com.marineplay.chartplotter.domain.usecases.*
 import com.marineplay.chartplotter.helpers.PointHelper
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.TrackManager
+import com.marineplay.chartplotter.data.SystemSettings
+import com.marineplay.chartplotter.data.SystemSettingsManager
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 
@@ -48,7 +50,8 @@ data class MapUiState(
     val currentMenu: String = "main", // "main", "point", "ais", "navigation", "track", "display"
     val isZoomInLongPressed: Boolean = false,
     val isZoomOutLongPressed: Boolean = false,
-    val popupPosition: android.graphics.PointF? = null
+    val popupPosition: android.graphics.PointF? = null,
+    val showSettingsScreen: Boolean = false // 설정 화면 표시 여부
 )
 
 /**
@@ -89,7 +92,21 @@ data class DialogUiState(
     val isAddingWaypoint: Boolean = false,
     val showTrackSettingsDialog: Boolean = false,
     val showTrackListDialog: Boolean = false,
-    val showTrackRecordListDialog: Boolean = false
+    val showTrackRecordListDialog: Boolean = false,
+    // 시스템 설정 다이얼로그들
+    val showLanguageDialog: Boolean = false,
+    val showVesselSettingsDialog: Boolean = false,
+    val showFontSizeDialog: Boolean = false,
+    val showVolumeDialog: Boolean = false,
+    val showTimeDialog: Boolean = false,
+    val showGeodeticDialog: Boolean = false,
+    val showCoordinateDialog: Boolean = false,
+    val showDeclinationDialog: Boolean = false,
+    val showResetConfirmDialog: Boolean = false,
+    val showPowerDialog: Boolean = false,
+    val showAdvancedDialog: Boolean = false,
+    val showConnectionDialog: Boolean = false,
+    val showInfoDialog: Boolean = false
 )
 
 /**
@@ -111,7 +128,8 @@ class MainViewModel(
     private val addTrackPointUseCase: AddTrackPointUseCase,
     // Helper들 (UseCase에서 사용)
     private val pointHelper: PointHelper,
-    private val trackManager: TrackManager
+    private val trackManager: TrackManager,
+    private val systemSettingsManager: SystemSettingsManager
 ) : ViewModel() {
     
     // ========== UI 상태 ==========
@@ -129,6 +147,15 @@ class MainViewModel(
     
     var dialogUiState by mutableStateOf(DialogUiState())
         private set
+    
+    // 시스템 설정 상태
+    var systemSettings by mutableStateOf(SystemSettings())
+        private set
+    
+    init {
+        // 시스템 설정 로드
+        systemSettings = systemSettingsManager.loadSettings()
+    }
     
     // ========== PointUiState 업데이트 함수들 ==========
     
@@ -208,6 +235,10 @@ class MainViewModel(
     
     fun updateCurrentMenu(menu: String) {
         mapUiState = mapUiState.copy(currentMenu = menu)
+    }
+    
+    fun updateShowSettingsScreen(show: Boolean) {
+        mapUiState = mapUiState.copy(showSettingsScreen = show)
     }
     
     fun updateIsZoomInLongPressed(pressed: Boolean) {
@@ -319,6 +350,148 @@ class MainViewModel(
     
     fun updateShowTrackRecordListDialog(show: Boolean) {
         dialogUiState = dialogUiState.copy(showTrackRecordListDialog = show)
+    }
+    
+    // 시스템 설정 다이얼로그 업데이트 함수들
+    fun updateShowLanguageDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showLanguageDialog = show)
+    }
+    
+    fun updateShowVesselSettingsDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showVesselSettingsDialog = show)
+    }
+    
+    fun updateShowFontSizeDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showFontSizeDialog = show)
+    }
+    
+    fun updateShowVolumeDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showVolumeDialog = show)
+    }
+    
+    fun updateShowTimeDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showTimeDialog = show)
+    }
+    
+    fun updateShowGeodeticDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showGeodeticDialog = show)
+    }
+    
+    fun updateShowCoordinateDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showCoordinateDialog = show)
+    }
+    
+    fun updateShowDeclinationDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showDeclinationDialog = show)
+    }
+    
+    fun updateShowResetConfirmDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showResetConfirmDialog = show)
+    }
+    
+    fun updateShowPowerDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showPowerDialog = show)
+    }
+    
+    fun updateShowAdvancedDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showAdvancedDialog = show)
+    }
+    
+    fun updateShowConnectionDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showConnectionDialog = show)
+    }
+    
+    fun updateShowInfoDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showInfoDialog = show)
+    }
+    
+    // 시스템 설정 업데이트 함수들
+    fun updateSystemSettings(settings: SystemSettings) {
+        systemSettings = settings
+        systemSettingsManager.saveSettings(settings)
+    }
+    
+    fun updateLanguage(language: String) {
+        val newSettings = systemSettings.copy(language = language)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateVesselSettings(length: Float, width: Float) {
+        val newSettings = systemSettings.copy(vesselLength = length, vesselWidth = width)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateFontSize(size: Float) {
+        val newSettings = systemSettings.copy(fontSize = size)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateButtonVolume(volume: Int) {
+        val newSettings = systemSettings.copy(buttonVolume = volume)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateTimeFormat(format: String) {
+        val newSettings = systemSettings.copy(timeFormat = format)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateDateFormat(format: String) {
+        val newSettings = systemSettings.copy(dateFormat = format)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateGeodeticSystem(system: String) {
+        val newSettings = systemSettings.copy(geodeticSystem = system)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateCoordinateFormat(format: String) {
+        val newSettings = systemSettings.copy(coordinateFormat = format)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateDeclinationMode(mode: String) {
+        val newSettings = systemSettings.copy(declinationMode = mode)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateDeclinationValue(value: Float) {
+        val newSettings = systemSettings.copy(declinationValue = value)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updatePingSync(enabled: Boolean) {
+        val newSettings = systemSettings.copy(pingSync = enabled)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateAdvancedFeature(key: String, enabled: Boolean) {
+        val newFeatures = systemSettings.advancedFeatures.toMutableMap()
+        newFeatures[key] = enabled
+        val newSettings = systemSettings.copy(advancedFeatures = newFeatures)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun resetSystemSettings() {
+        systemSettingsManager.resetToDefaults()
+        systemSettings = systemSettingsManager.loadSettings()
+    }
+    
+    // 항해 설정 업데이트 함수들
+    fun updateArrivalRadius(radius: Float) {
+        val newSettings = systemSettings.copy(arrivalRadius = radius)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateXteLimit(limit: Float) {
+        val newSettings = systemSettings.copy(xteLimit = limit)
+        updateSystemSettings(newSettings)
+    }
+    
+    fun updateXteAlertEnabled(enabled: Boolean) {
+        val newSettings = systemSettings.copy(xteAlertEnabled = enabled)
+        updateSystemSettings(newSettings)
     }
     
     // ========== 비즈니스 로직 함수들 (UseCase 사용) ==========
@@ -653,7 +826,8 @@ class MainViewModel(
         fun provideFactory(
             pointHelper: PointHelper,
             trackManager: TrackManager,
-            locationManager: LocationManager?
+            locationManager: LocationManager?,
+            systemSettingsManager: SystemSettingsManager
         ): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -684,7 +858,8 @@ class MainViewModel(
                         stopTrackRecordingUseCase = stopTrackRecordingUseCase,
                         addTrackPointUseCase = addTrackPointUseCase,
                         pointHelper = pointHelper,
-                        trackManager = trackManager
+                        trackManager = trackManager,
+                        systemSettingsManager = systemSettingsManager
                     ) as T
                 }
             }

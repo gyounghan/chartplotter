@@ -1,4 +1,4 @@
-package com.marineplay.chartplotter.ui.screens.components
+package com.marineplay.chartplotter.ui.modules.chart.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*

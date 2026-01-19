@@ -311,12 +311,6 @@ class MainActivity : ComponentActivity() {
         return nextNumber
     }
 
-
-
-
-
-
-
     // 두 지점 간의 거리 계산 (미터) - 유틸리티 클래스 사용
     private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         return DistanceCalculator.calculateGeographicDistance(lat1, lon1, lat2, lon2)
@@ -636,6 +630,7 @@ class MainActivity : ComponentActivity() {
         // 헬퍼들 초기화
         pointHelper = PointHelper(this)
         trackManager = TrackManager(this)
+        val systemSettingsManager = com.marineplay.chartplotter.data.SystemSettingsManager(this)
 
         // SharedPreferences 초기화
         sharedPreferences = getSharedPreferences("chart_plotter_points", Context.MODE_PRIVATE)
@@ -666,7 +661,8 @@ class MainActivity : ComponentActivity() {
                     factory = MainViewModel.provideFactory(
                         pointHelper = pointHelper,
                         trackManager = trackManager,
-                        locationManager = locationManager
+                        locationManager = locationManager,
+                        systemSettingsManager = systemSettingsManager
                     )
                 )
                 

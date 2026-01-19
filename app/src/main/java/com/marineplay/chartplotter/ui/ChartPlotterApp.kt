@@ -9,6 +9,7 @@ import com.marineplay.chartplotter.TrackManager
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.EntryMode
 import com.marineplay.chartplotter.ui.modules.*
+import com.marineplay.chartplotter.ui.modules.chart.ChartOnlyScreen
 import com.marineplay.chartplotter.ui.modules.ais.AISOnlyScreen
 import com.marineplay.chartplotter.ui.modules.camera.CameraOnlyScreen
 import org.maplibre.android.maps.MapLibreMap

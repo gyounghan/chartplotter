@@ -55,7 +55,7 @@ fun CameraOnlyScreen(
             SideNavigation(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
-                modifier = Modifier.width(80.ㅑdp)
+                modifier = Modifier.width(80.dp)
             )
         }
     }
