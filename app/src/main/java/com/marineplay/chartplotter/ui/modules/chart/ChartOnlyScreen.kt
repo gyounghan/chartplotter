@@ -189,6 +189,9 @@ fun ChartOnlyScreen(
                         trackUiState.currentRecordingTrack!!.color
                     )
                 }
+                
+                // 현재 항적 레이어 추가 후 선박 레이어를 다시 맨 위로 이동
+                locationManager?.moveShipLayerToTop(style)
             }
         }
     }
@@ -277,6 +280,11 @@ fun ChartOnlyScreen(
             if (trackUiState.recordingTracks.isNotEmpty() ||
                 (trackUiState.isRecordingTrack && trackUiState.currentRecordingTrack != null)) {
                 updateCurrentTrackDisplay()
+            }
+            
+            // 항적 레이어 추가 후 선박 레이어를 다시 맨 위로 이동
+            map.getStyle { style ->
+                locationManager?.moveShipLayerToTop(style)
             }
         }
     }

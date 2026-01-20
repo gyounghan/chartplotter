@@ -367,7 +367,7 @@ class LocationManager(
             shipLayer = SymbolLayer(SHIP_LAYER_ID, SHIP_SOURCE_ID).apply {
                 setProperties(
                     PropertyFactory.iconImage("ship-icon"),
-                    PropertyFactory.iconSize(1.0f),
+                    PropertyFactory.iconSize(1.5f), // 크기 증가: 1.0f -> 1.5f
                     PropertyFactory.iconAllowOverlap(true),
                     PropertyFactory.iconIgnorePlacement(true),
                     PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
@@ -379,6 +379,63 @@ class LocationManager(
             Log.d("[LocationManager]", "삼각형 선박 아이콘 레이어가 추가되었습니다.")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "선박 아이콘 추가 실패: ${e.message}")
+        }
+    }
+    
+    /** 선박 레이어를 모든 레이어의 맨 위로 이동 */
+    fun moveShipLayerToTop(style: Style) {
+        try {
+            // 소스가 존재하는지 확인하고, 없으면 다시 생성
+            if (style.getSource(SHIP_SOURCE_ID) == null) {
+                Log.w("[LocationManager]", "선박 소스가 없어서 다시 생성합니다")
+                shipSource = GeoJsonSource(SHIP_SOURCE_ID).also { style.addSource(it) }
+            }
+            
+            // 이미지가 존재하는지 확인하고, 없으면 다시 생성
+            if (style.getImage("ship-icon") == null) {
+                Log.w("[LocationManager]", "선박 이미지가 없어서 다시 생성합니다")
+                val shipBitmap = createShipTriangleIcon(0f)
+                style.addImage("ship-icon", shipBitmap)
+            }
+            
+            val existingLayer = style.getLayer(SHIP_LAYER_ID)
+            if (existingLayer != null) {
+                // 선박 레이어를 제거하고 다시 추가하여 맨 위로 이동
+                style.removeLayer(SHIP_LAYER_ID)
+                
+                // 새로운 레이어를 생성해서 추가
+                val newShipLayer = SymbolLayer(SHIP_LAYER_ID, SHIP_SOURCE_ID).apply {
+                    setProperties(
+                        PropertyFactory.iconImage("ship-icon"),
+                        PropertyFactory.iconSize(1.5f),
+                        PropertyFactory.iconAllowOverlap(true),
+                        PropertyFactory.iconIgnorePlacement(true),
+                        PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+                        PropertyFactory.iconRotate(get("bearing")),
+                        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP)
+                    )
+                }
+                style.addLayer(newShipLayer)
+                shipLayer = newShipLayer
+                
+                // 현재 위치가 있으면 소스 업데이트
+                currentLocation?.let { updateShipLocation(it) }
+                
+                Log.d("[LocationManager]", "선박 레이어를 맨 위로 이동 완료")
+            } else {
+                // 레이어가 없으면 다시 생성
+                Log.w("[LocationManager]", "선박 레이어가 없어서 다시 생성합니다")
+                addShipToMap(style)
+            }
+        } catch (e: Exception) {
+            Log.e("[LocationManager]", "선박 레이어를 맨 위로 이동 실패: ${e.message}")
+            e.printStackTrace()
+            // 실패 시 레이어를 다시 생성
+            try {
+                addShipToMap(style)
+            } catch (e2: Exception) {
+                Log.e("[LocationManager]", "선박 레이어 재생성 실패: ${e2.message}")
+            }
         }
     }
 
@@ -716,7 +773,7 @@ class LocationManager(
     
     /** 삼각형 선박 아이콘 생성 */
     private fun createShipTriangleIcon(bearing: Float): Bitmap {
-        val size = 72
+        val size = 96 // 크기 증가: 72 -> 96
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         
