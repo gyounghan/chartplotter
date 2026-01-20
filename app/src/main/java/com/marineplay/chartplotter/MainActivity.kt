@@ -630,7 +630,7 @@ class MainActivity : ComponentActivity() {
         // 헬퍼들 초기화
         pointHelper = PointHelper(this)
         trackManager = TrackManager(this)
-        val systemSettingsManager = com.marineplay.chartplotter.data.SystemSettingsManager(this)
+        val systemSettingsReader = com.marineplay.chartplotter.data.SystemSettingsReader(this)
 
         // SharedPreferences 초기화
         sharedPreferences = getSharedPreferences("chart_plotter_points", Context.MODE_PRIVATE)
@@ -662,7 +662,7 @@ class MainActivity : ComponentActivity() {
                         pointHelper = pointHelper,
                         trackManager = trackManager,
                         locationManager = locationManager,
-                        systemSettingsManager = systemSettingsManager
+                        systemSettingsReader = systemSettingsReader
                     )
                 )
                 

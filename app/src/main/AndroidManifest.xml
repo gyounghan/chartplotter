@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    
+    <!-- SystemSetting 앱의 ContentProvider 접근 권한 -->
+    <queries>
+        <package android:name="com.marineplay.systemsetting" />
+    </queries>
 
     <application
         android:allowBackup="true"

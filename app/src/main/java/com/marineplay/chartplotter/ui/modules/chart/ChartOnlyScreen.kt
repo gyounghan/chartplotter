@@ -22,24 +22,10 @@ import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.*
 import com.marineplay.chartplotter.helpers.PointHelper
 import com.marineplay.chartplotter.ui.components.dialogs.*
-import com.marineplay.chartplotter.ui.components.dialogs.SystemLanguageDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemVesselSettingsDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemFontSizeDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemVolumeDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemTimeDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemGeodeticDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemCoordinateDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemDeclinationDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemResetConfirmDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemPowerDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemAdvancedDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemConnectionDialog
-import com.marineplay.chartplotter.ui.components.dialogs.SystemInfoDialog
 import com.marineplay.chartplotter.ui.components.map.ChartPlotterMap
 import com.marineplay.chartplotter.ui.modules.chart.components.MapControls
 import com.marineplay.chartplotter.ui.modules.chart.components.MenuPanel
 import com.marineplay.chartplotter.ui.modules.chart.components.MapOverlays
-import com.marineplay.chartplotter.ui.modules.chart.components.SettingsScreen
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.domain.mappers.PointMapper
@@ -64,6 +50,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.core.content.ContextCompat
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import org.maplibre.android.geometry.LatLngBounds
 import androidx.compose.ui.graphics.toArgb
 
@@ -368,10 +356,8 @@ fun ChartOnlyScreen(
     val dialogUiState = viewModel.dialogUiState
 
     // 뒤로가기 처리: 설정 화면이나 메뉴가 열려있으면 닫기
-    BackHandler(enabled = mapUiState.showSettingsScreen || mapUiState.showMenu) {
-        if (mapUiState.showSettingsScreen) {
-            viewModel.updateShowSettingsScreen(false)
-        } else if (mapUiState.showMenu) {
+    BackHandler(enabled = mapUiState.showMenu) {
+        if (mapUiState.showMenu) {
             viewModel.updateShowMenu(false)
             viewModel.updateCurrentMenu("main")
         }
@@ -1074,122 +1060,8 @@ fun ChartOnlyScreen(
         )
     }
 
-    // 시스템 설정 다이얼로그들
-    val systemSettings = viewModel.systemSettings
-    
-    if (dialogUiState.showLanguageDialog) {
-        SystemLanguageDialog(
-            currentLanguage = systemSettings.language,
-            onLanguageSelected = { viewModel.updateLanguage(it) },
-            onDismiss = { viewModel.updateShowLanguageDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showVesselSettingsDialog) {
-        SystemVesselSettingsDialog(
-            currentLength = systemSettings.vesselLength,
-            currentWidth = systemSettings.vesselWidth,
-            onSave = { length, width -> viewModel.updateVesselSettings(length, width) },
-            onDismiss = { viewModel.updateShowVesselSettingsDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showFontSizeDialog) {
-        SystemFontSizeDialog(
-            currentSize = systemSettings.fontSize,
-            onSizeChanged = { size -> viewModel.updateFontSize(size) },
-            onDismiss = { viewModel.updateShowFontSizeDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showVolumeDialog) {
-        SystemVolumeDialog(
-            currentVolume = systemSettings.buttonVolume,
-            onVolumeChanged = { volume -> viewModel.updateButtonVolume(volume) },
-            onDismiss = { viewModel.updateShowVolumeDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showTimeDialog) {
-        SystemTimeDialog(
-            currentTimeFormat = systemSettings.timeFormat,
-            currentDateFormat = systemSettings.dateFormat,
-            onTimeFormatChanged = { format -> viewModel.updateTimeFormat(format) },
-            onDateFormatChanged = { format -> viewModel.updateDateFormat(format) },
-            onDismiss = { viewModel.updateShowTimeDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showGeodeticDialog) {
-        SystemGeodeticDialog(
-            currentSystem = systemSettings.geodeticSystem,
-            onSystemSelected = { system -> viewModel.updateGeodeticSystem(system) },
-            onDismiss = { viewModel.updateShowGeodeticDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showCoordinateDialog) {
-        SystemCoordinateDialog(
-            currentFormat = systemSettings.coordinateFormat,
-            onFormatSelected = { format -> viewModel.updateCoordinateFormat(format) },
-            onDismiss = { viewModel.updateShowCoordinateDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showDeclinationDialog) {
-        SystemDeclinationDialog(
-            currentMode = systemSettings.declinationMode,
-            currentValue = systemSettings.declinationValue,
-            onModeChanged = { mode -> viewModel.updateDeclinationMode(mode) },
-            onValueChanged = { value -> viewModel.updateDeclinationValue(value) },
-            onDismiss = { viewModel.updateShowDeclinationDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showResetConfirmDialog) {
-        SystemResetConfirmDialog(
-            onConfirm = { viewModel.resetSystemSettings() },
-            onDismiss = { viewModel.updateShowResetConfirmDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showPowerDialog) {
-        SystemPowerDialog(
-            pingSync = systemSettings.pingSync,
-            onPingSyncChanged = { enabled -> viewModel.updatePingSync(enabled) },
-            onDismiss = { viewModel.updateShowPowerDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showAdvancedDialog) {
-        SystemAdvancedDialog(
-            advancedFeatures = systemSettings.advancedFeatures,
-            onFeatureChanged = { key, enabled -> viewModel.updateAdvancedFeature(key, enabled) },
-            onDismiss = { viewModel.updateShowAdvancedDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showConnectionDialog) {
-        SystemConnectionDialog(
-            isConnected = systemSettings.mobileConnected,
-            onConnect = {
-                val newSettings = systemSettings.copy(mobileConnected = true)
-                viewModel.updateSystemSettings(newSettings)
-            },
-            onDisconnect = {
-                val newSettings = systemSettings.copy(mobileConnected = false)
-                viewModel.updateSystemSettings(newSettings)
-            },
-            onDismiss = { viewModel.updateShowConnectionDialog(false) }
-        )
-    }
-    
-    if (dialogUiState.showInfoDialog) {
-        SystemInfoDialog(
-            softwareVersion = systemSettings.softwareVersion,
-            onDismiss = { viewModel.updateShowInfoDialog(false) }
-        )
-    }
+    // 시스템 설정은 SystemSetting 앱에서만 관리됩니다.
+    // 차트플로터 앱은 설정값을 읽어서만 사용합니다.
 
     // 포인트 선택 다이얼로그 (코스업용 및 경유지 추가용)
     if (dialogUiState.showPointSelectionDialog) {
@@ -1709,6 +1581,7 @@ fun ChartOnlyScreen(
             locationManager = locationManager,
             loadPointsFromLocal = { loadPointsFromLocal() },
             getNextAvailablePointNumber = { getNextAvailablePointNumber() },
+            activity = activity,
             updateMapRotation = { updateMapRotation() },
             stopTrackRecording = { stopTrackRecording() }
         )
@@ -1895,15 +1768,7 @@ fun ChartOnlyScreen(
         // 좌측 상단/하단 오버레이는 MapOverlays로 이동됨
         }
         
-        // 설정 화면 (최상위 레이어, 설정 화면이 열려있을 때만 표시)
-        if (mapUiState.showSettingsScreen) {
-            SettingsScreen(
-                viewModel = viewModel,
-                onDismiss = {
-                    viewModel.updateShowSettingsScreen(false)
-                }
-            )
-        }
+        // 설정 화면은 SystemSetting 앱에서만 제공됩니다.
     }
 }
 
