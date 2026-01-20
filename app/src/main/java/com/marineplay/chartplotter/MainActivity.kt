@@ -234,67 +234,14 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun zoomIn(viewModel: MainViewModel) {
-        mapLibreMap?.let { map ->
-            val currentZoom = map.cameraPosition.zoom
-            val newZoom = (currentZoom + 0.1).coerceAtMost(22.0)
-            val mapUiState = viewModel.mapUiState
-            
-            // 커서가 있으면 커서 위치를 중앙으로 맞추고 줌 인
-            if (mapUiState.showCursor && mapUiState.cursorLatLng != null) {
-                val cursorLatLngValue = mapUiState.cursorLatLng!!
-                val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
-                    .target(cursorLatLngValue)
-                    .zoom(newZoom)
-                    .bearing(map.cameraPosition.bearing)
-                    .build()
-                map.cameraPosition = newPosition
-                
-                // 커서 화면 위치를 중앙으로 업데이트
-                val centerScreenPoint = map.projection.toScreenLocation(cursorLatLngValue)
-                viewModel.updateCursorScreenPosition(centerScreenPoint)
-                
-                Log.d("[MainActivity]", "하드웨어 줌 인: 커서 위치를 중앙으로 맞추고 줌 $currentZoom -> $newZoom")
-            } else {
-                val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
-                    .target(map.cameraPosition.target)
-                    .zoom(newZoom)
-                    .bearing(map.cameraPosition.bearing)
-                    .build()
-                map.cameraPosition = newPosition
-            }
-        }
+        // ✅ 줌 로직 단일화: 실제 줌/커서 보정은 ViewModel/UseCase에서 수행
+        // (UI 버튼/하드웨어 키/리모컨 등 입력 경로가 달라도 동일 동작 보장)
+        viewModel.zoomIn(mapLibreMap)
     }
     
     private fun zoomOut(viewModel: MainViewModel) {
-        mapLibreMap?.let { map ->
-            val currentZoom = map.cameraPosition.zoom
-            val newZoom = (currentZoom - 0.1).coerceAtLeast(6.0)
-            val mapUiState = viewModel.mapUiState
-            
-            // 커서가 있으면 커서 위치를 중앙으로 맞추고 줌 아웃
-            if (mapUiState.showCursor && mapUiState.cursorLatLng != null) {
-                val cursorLatLngValue = mapUiState.cursorLatLng!!
-                val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
-                    .target(cursorLatLngValue)
-                    .zoom(newZoom)
-                    .bearing(map.cameraPosition.bearing)
-                    .build()
-                map.cameraPosition = newPosition
-                
-                // 커서 화면 위치를 중앙으로 업데이트
-                val centerScreenPoint = map.projection.toScreenLocation(cursorLatLngValue)
-                viewModel.updateCursorScreenPosition(centerScreenPoint)
-                
-                Log.d("[MainActivity]", "하드웨어 줌 아웃: 커서 위치를 중앙으로 맞추고 줌 $currentZoom -> $newZoom")
-            } else {
-                val newPosition = org.maplibre.android.camera.CameraPosition.Builder()
-                    .target(map.cameraPosition.target)
-                    .zoom(newZoom)
-                    .bearing(map.cameraPosition.bearing)
-                    .build()
-                map.cameraPosition = newPosition
-            }
-        }
+        // ✅ 줌 로직 단일화: 실제 줌/커서 보정은 ViewModel/UseCase에서 수행
+        viewModel.zoomOut(mapLibreMap)
     }
 
     // 사용 가능한 최소 포인트 번호 찾기
@@ -357,19 +304,19 @@ class MainActivity : ComponentActivity() {
         
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val runnable = object : Runnable {
-            override fun run() {
-                val trackUiState = viewModel.trackUiState
-                val gpsUiState = viewModel.gpsUiState
+                override fun run() {
+                    val trackUiState = viewModel.trackUiState
+                    val gpsUiState = viewModel.gpsUiState
                 val recordingState = trackUiState.recordingTracks[trackId]
                 
                 if (recordingState != null && gpsUiState.lastGpsLocation != null) {
-                    // 마지막 GPS 위치를 항적 점으로 추가
-                    val lastGpsLocation = gpsUiState.lastGpsLocation!!
-                    
+                        // 마지막 GPS 위치를 항적 점으로 추가
+                        val lastGpsLocation = gpsUiState.lastGpsLocation!!
+                        
                     // ViewModel을 통해 점 추가 (타이머에서 호출되었음을 표시)
                     viewModel.addTrackPointIfNeeded(lastGpsLocation.latitude, lastGpsLocation.longitude, isTimerTriggered = true)
-                    
-                    // 다음 타이머 예약
+                        
+                        // 다음 타이머 예약
                     handler.postDelayed(this, timeInterval)
                 } else {
                     Log.w("[MainActivity]", "타이머 실행 중 GPS 위치 또는 기록 상태 없음: $trackId")
@@ -426,40 +373,40 @@ class MainActivity : ComponentActivity() {
             val track = viewModel.getTrack(trackId) ?: return@forEach
             
             when (track.intervalType) {
-                "time" -> {
+            "time" -> {
                     // 시간 간격 기준: 첫 번째 점 추가 후 타이머 시작
                     if (recordingState.lastTrackPointTime == 0L) {
-                        // 첫 번째 점 추가
+                    // 첫 번째 점 추가
                         viewModel.addTrackPointIfNeeded(latitude, longitude)
-                        
-                        // 타이머 시작 (설정한 시간 간격마다 점 추가)
-                        startTrackTimer(trackId, track.timeInterval, viewModel)
-                    }
-                    // 이후 점들은 타이머가 추가함
-                }
-                "distance" -> {
-                    // 거리 간격 기준: GPS 업데이트마다 거리 체크
-                    var shouldAddPoint = false
                     
+                    // 타이머 시작 (설정한 시간 간격마다 점 추가)
+                        startTrackTimer(trackId, track.timeInterval, viewModel)
+                }
+                // 이후 점들은 타이머가 추가함
+            }
+            "distance" -> {
+                // 거리 간격 기준: GPS 업데이트마다 거리 체크
+                var shouldAddPoint = false
+                
                     if (recordingState.lastTrackPointLocation == null) {
-                        // 첫 번째 점
-                        shouldAddPoint = true
-                    } else {
-                        val distance = calculateDistance(
+                    // 첫 번째 점
+                    shouldAddPoint = true
+                } else {
+                    val distance = calculateDistance(
                             recordingState.lastTrackPointLocation!!.latitude,
                             recordingState.lastTrackPointLocation!!.longitude,
-                            latitude,
-                            longitude
-                        )
+                        latitude,
+                        longitude
+                    )
                         if (distance >= track.distanceInterval) {
-                            shouldAddPoint = true
-                        }
-                    }
-                    
-                    if (shouldAddPoint) {
-                        viewModel.addTrackPointIfNeeded(latitude, longitude)
+                        shouldAddPoint = true
                     }
                 }
+                
+                if (shouldAddPoint) {
+                        viewModel.addTrackPointIfNeeded(latitude, longitude)
+        }
+    }
             }
         }
     }

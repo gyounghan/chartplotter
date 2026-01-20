@@ -996,20 +996,20 @@ class MainViewModel(
         currentTrackUiState.recordingTracks.forEach { (trackId, recordingState) ->
             // 캐시에서 항적 정보 가져오기 (성능 최적화)
             val track = runBlocking { getTrackFromCache(trackId) } ?: return@forEach
-            
-            val newPoint = addTrackPointUseCase.execute(
-                latitude = latitude,
-                longitude = longitude,
-                currentTime = currentTime,
+        
+        val newPoint = addTrackPointUseCase.execute(
+            latitude = latitude,
+            longitude = longitude,
+            currentTime = currentTime,
                 lastTrackPointTime = recordingState.lastTrackPointTime,
                 lastTrackPointLocation = recordingState.lastTrackPointLocation,
                 intervalType = track.intervalType,
                 timeInterval = track.timeInterval,
                 distanceInterval = track.distanceInterval,
                 isTimerTriggered = isTimerTriggered
-            )
-            
-            if (newPoint != null) {
+        )
+        
+        if (newPoint != null) {
                 // TrackPoint를 실시간으로 DB에 저장 (앱 종료 시에도 데이터 손실 없음)
                 viewModelScope.launch {
                     trackRepository.addTrackPoint(trackId, newPoint)
@@ -1025,8 +1025,8 @@ class MainViewModel(
                 
                 // 하위 호환성 유지 (첫 번째 기록 중인 항적)
                 if (trackId == currentTrackUiState.currentRecordingTrack?.id) {
-                    addTrackPoint(newPoint)
-                }
+            addTrackPoint(newPoint)
+        }
             }
         }
         

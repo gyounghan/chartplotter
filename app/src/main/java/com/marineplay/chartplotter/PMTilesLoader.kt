@@ -1158,19 +1158,19 @@ object PMTilesLoader {
             try {
                 // 선용 GeoJSON (점이 2개 이상일 때만)
                 val lineFeatureCollection = if (points.size >= 2) {
-                    val coordinates = points.map { listOf(it.longitude, it.latitude) }
-                    val lineString = org.json.JSONObject().apply {
-                        put("type", "LineString")
-                        put("coordinates", org.json.JSONArray(coordinates))
-                    }
-                    val feature = org.json.JSONObject().apply {
-                        put("type", "Feature")
-                        put("geometry", lineString)
-                    }
+                val coordinates = points.map { listOf(it.longitude, it.latitude) }
+                val lineString = org.json.JSONObject().apply {
+                    put("type", "LineString")
+                    put("coordinates", org.json.JSONArray(coordinates))
+                }
+                val feature = org.json.JSONObject().apply {
+                    put("type", "Feature")
+                    put("geometry", lineString)
+                }
                     org.json.JSONObject().apply {
-                        put("type", "FeatureCollection")
-                        put("features", org.json.JSONArray(listOf(feature)))
-                    }
+                    put("type", "FeatureCollection")
+                    put("features", org.json.JSONArray(listOf(feature)))
+                }
                 } else null
                 
                 // 점 마커용 GeoJSON (모든 점마다)
@@ -1213,8 +1213,8 @@ object PMTilesLoader {
                         } catch (e: Exception) {
                             Log.w("[PMTilesLoader]", "레이어 제거 실패: $layerId, ${e.message}")
                         }
-                        style.removeSource(sourceId)
-                    }
+                    style.removeSource(sourceId)
+                }
                     
                     // 점 마커 소스 제거
                     val existingPointSource = style.getSource(pointSourceId)
@@ -1254,26 +1254,26 @@ object PMTilesLoader {
                     
                     // 하이라이트 여부에 따라 효과 조정 (굵기는 유지, 하이라이트 느낌만)
                     val lineWidth = 1.5f // 굵기는 항상 동일
-                    
+                
                     // 하이라이트된 경우 흰색 테두리 효과 (글로우 효과)
-                    if (isHighlighted) {
+                if (isHighlighted) {
                         // 배경 레이어 (흰색, 약간 더 두껍게 - 글로우 효과)
-                        val backgroundLayer = LineLayer("${sourceId}_bg_layer", sourceId)
-                            .withProperties(
-                                PropertyFactory.lineColor(android.graphics.Color.WHITE),
+                    val backgroundLayer = LineLayer("${sourceId}_bg_layer", sourceId)
+                        .withProperties(
+                            PropertyFactory.lineColor(android.graphics.Color.WHITE),
                                 PropertyFactory.lineWidth(lineWidth + 2.0f), // 테두리 효과
                                 PropertyFactory.lineOpacity(0.7f), // 반투명 흰색 테두리
-                                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
-                            )
-                        style.addLayer(backgroundLayer)
-                    }
-                    
+                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                        )
+                    style.addLayer(backgroundLayer)
+                }
+                
                     // 메인 선 레이어 (하이라이트 시 색상을 더 밝게)
                     val baseColor = android.graphics.Color.rgb(
-                        (color.red * 255).toInt(),
-                        (color.green * 255).toInt(),
-                        (color.blue * 255).toInt()
+                            (color.red * 255).toInt(),
+                            (color.green * 255).toInt(),
+                            (color.blue * 255).toInt()
                     )
                     
                     // 하이라이트 시 색상을 더 밝게 (RGB 값을 증가)
@@ -1292,10 +1292,10 @@ object PMTilesLoader {
                             PropertyFactory.lineColor(lineColor),
                             PropertyFactory.lineWidth(lineWidth), // 굵기는 항상 동일
                             PropertyFactory.lineOpacity(if (isHighlighted) 1.0f else 0.8f), // 하이라이트 시 더 선명하게
-                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
-                        )
-                    style.addLayer(trackLineLayer)
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                    )
+                style.addLayer(trackLineLayer)
                 }
                 
                 // 점 마커 추가 (모든 점마다)

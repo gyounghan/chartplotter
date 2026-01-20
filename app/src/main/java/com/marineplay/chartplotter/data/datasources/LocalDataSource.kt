@@ -171,17 +171,17 @@ class LocalDataSource(context: Context) {
                 put("name", track.name)
                 put("colorValue", track.color.value.toLong())
                 put("isVisible", track.isVisible)
-                
-                val pointsArray = JSONArray()
+                        
+                        val pointsArray = JSONArray()
                 track.points.forEach { point ->
-                    val pointJson = JSONObject().apply {
-                        put("latitude", point.latitude)
-                        put("longitude", point.longitude)
-                        put("timestamp", point.timestamp)
-                    }
-                    pointsArray.put(pointJson)
-                }
-                put("points", pointsArray)
+                            val pointJson = JSONObject().apply {
+                                put("latitude", point.latitude)
+                                put("longitude", point.longitude)
+                                put("timestamp", point.timestamp)
+                            }
+                            pointsArray.put(pointJson)
+                        }
+                        put("points", pointsArray)
             }
             jsonArray.put(trackJson)
         }
@@ -205,12 +205,12 @@ class LocalDataSource(context: Context) {
                 
                 // 하위 호환성: records가 있으면 points로 변환
                 if (trackJson.has("records")) {
-                    val recordsArray = trackJson.getJSONArray("records")
-                    for (j in 0 until recordsArray.length()) {
-                        val recordJson = recordsArray.getJSONObject(j)
-                        val pointsArray = recordJson.getJSONArray("points")
-                        for (k in 0 until pointsArray.length()) {
-                            val pointJson = pointsArray.getJSONObject(k)
+                val recordsArray = trackJson.getJSONArray("records")
+                for (j in 0 until recordsArray.length()) {
+                    val recordJson = recordsArray.getJSONObject(j)
+                    val pointsArray = recordJson.getJSONArray("points")
+                    for (k in 0 until pointsArray.length()) {
+                        val pointJson = pointsArray.getJSONObject(k)
                             track.points.add(
                                 TrackPoint(
                                     latitude = pointJson.getDouble("latitude"),
