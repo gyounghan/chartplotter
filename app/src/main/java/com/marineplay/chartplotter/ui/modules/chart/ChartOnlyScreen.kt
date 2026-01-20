@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material3.RadioButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Menu
@@ -20,6 +21,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.*
+import com.marineplay.chartplotter.domain.entities.Track
+import com.marineplay.chartplotter.MainActivity
+import kotlinx.coroutines.runBlocking
 import com.marineplay.chartplotter.helpers.PointHelper
 import com.marineplay.chartplotter.ui.components.dialogs.*
 import com.marineplay.chartplotter.ui.components.map.ChartPlotterMap
@@ -61,7 +65,6 @@ fun ChartOnlyScreen(
     viewModel: MainViewModel,
     activity: ComponentActivity,
     pointHelper: PointHelper,
-    trackManager: TrackManager,
     onMapLibreMapChange: (MapLibreMap?) -> Unit = {},
     onLocationManagerChange: (LocationManager?) -> Unit = {}
 ) {
@@ -144,16 +147,49 @@ fun ChartOnlyScreen(
 
     fun updateCurrentTrackDisplay() {
         val trackUiState = viewModel.trackUiState
-        if (trackUiState.trackPoints.isEmpty() || trackUiState.currentRecordingTrack == null) return
 
         mapLibreMap?.let { map ->
-            val points = trackUiState.trackPoints.map { LatLng(it.latitude, it.longitude) }
-            PMTilesLoader.addTrackLine(
-                map,
-                "current_track",
-                points,
-                trackUiState.currentRecordingTrack!!.color
-            )
+            // 배치 업데이트: 한 번의 getStyle 콜백에서 모든 항적 처리 (성능 최적화)
+            map.getStyle { style ->
+                // 여러 항적 동시 기록 지원: 각 항적마다 별도의 소스 ID 사용
+                trackUiState.recordingTracks.forEach { (trackId, recordingState) ->
+                    // 항적 정보 가져오기 (캐시 사용으로 최적화됨)
+                    val track = viewModel.getTrack(trackId) ?: return@forEach
+                    
+                    // 화면에 표시할 최대 점 수 제한 (성능 최적화: 최근 2000개만 표시)
+                    val displayPoints = if (recordingState.points.size > 2000) {
+                        recordingState.points.takeLast(2000)
+                    } else {
+                        recordingState.points
+                    }
+                    
+                    val points = displayPoints.map { LatLng(it.latitude, it.longitude) }
+                    // 선과 점 마커를 함께 표시 (점이 1개여도 선 함수가 처리)
+                    PMTilesLoader.addTrackLine(
+                        map,
+                        "current_track_$trackId", // 각 항적마다 고유한 소스 ID
+                        points,
+                        track.color
+                    )
+                }
+                
+                // 하위 호환성: 기존 current_track도 처리 (단일 항적 기록)
+                if (trackUiState.trackPoints.isNotEmpty() && trackUiState.currentRecordingTrack != null) {
+                    val displayPoints = if (trackUiState.trackPoints.size > 2000) {
+                        trackUiState.trackPoints.takeLast(2000)
+                    } else {
+                        trackUiState.trackPoints
+                    }
+                    val points = displayPoints.map { LatLng(it.latitude, it.longitude) }
+                    // 선과 점 마커를 함께 표시
+                    PMTilesLoader.addTrackLine(
+                        map,
+                        "current_track",
+                        points,
+                        trackUiState.currentRecordingTrack!!.color
+                    )
+                }
+            }
         }
     }
 
@@ -161,31 +197,90 @@ fun ChartOnlyScreen(
         mapLibreMap?.let { map ->
             PMTilesLoader.removeAllTracks(map)
 
-            viewModel.getTracks().forEach { track ->
-                if (track.isVisible) {
-                    track.records.forEach { record ->
-                        val points = record.points.map { LatLng(it.latitude, it.longitude) }
-                        val trackUiState = viewModel.trackUiState
-                        val isHighlighted = trackUiState.highlightedTrackRecord != null &&
-                                trackUiState.highlightedTrackRecord!!.first == track.id &&
-                                trackUiState.highlightedTrackRecord!!.second == record.id
+            val trackUiState = viewModel.trackUiState
+            val highlightedRecord = trackUiState.highlightedTrackRecord
+            
+            // 모든 항적을 표시하되, 하이라이트된 항적만 효과를 부여
+            val tracksToDisplay = viewModel.getTracks().filter { it.isVisible }
+            tracksToDisplay.forEach { track ->
+                val isHighlighted = highlightedRecord != null &&
+                        highlightedRecord.first == track.id &&
+                        highlightedRecord.second != null
+                
+                // 하이라이트된 항적인 경우 해당 날짜 포인트만 하이라이트 효과로 표시
+                if (isHighlighted) {
+                    val highlightedDate = highlightedRecord!!.second
+                    val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                    
+                    // 해당 날짜 포인트만 필터링
+                    val highlightedPoints = track.points.filter { point ->
+                        val pointDate = dateFormat.format(java.util.Date(point.timestamp))
+                        pointDate == highlightedDate
+                    }
+                    
+                    // 하이라이트된 날짜 포인트 표시
+                    if (highlightedPoints.isNotEmpty()) {
+                        val points = highlightedPoints.map { LatLng(it.latitude, it.longitude) }
                         PMTilesLoader.addTrackLine(
                             map,
-                            "track_${track.id}_${record.id}",
+                            "track_${track.id}_highlighted",
                             points,
                             track.color,
-                            isHighlighted
+                            true // 하이라이트 효과
+                        )
+                    }
+                    
+                    // 나머지 날짜 포인트는 일반 표시
+                    val otherPoints = track.points.filter { point ->
+                        val pointDate = dateFormat.format(java.util.Date(point.timestamp))
+                        pointDate != highlightedDate
+                    }
+                    
+                    if (otherPoints.isNotEmpty()) {
+                        // 최근 2000개 포인트만 표시
+                        val displayPoints = if (otherPoints.size > 2000) {
+                            otherPoints.takeLast(2000)
+                        } else {
+                            otherPoints
+                        }
+                        
+                        val points = displayPoints.map { LatLng(it.latitude, it.longitude) }
+                        PMTilesLoader.addTrackLine(
+                            map,
+                            "track_${track.id}",
+                            points,
+                            track.color,
+                            false // 하이라이트 효과 없음
+                        )
+                    }
+                } else {
+                    // 하이라이트되지 않은 항적: 일반 표시
+                    val displayPoints = if (track.points.size > 2000) {
+                        track.points.takeLast(2000)
+                    } else {
+                        track.points
+                    }
+                    
+                    if (displayPoints.isNotEmpty()) {
+                        val points = displayPoints.map { LatLng(it.latitude, it.longitude) }
+                        PMTilesLoader.addTrackLine(
+                            map,
+                            "track_${track.id}",
+                            points,
+                            track.color,
+                            false // 하이라이트 효과 없음
                         )
                     }
                 }
             }
 
-            val trackUiState = viewModel.trackUiState
-            if (trackUiState.isRecordingTrack && trackUiState.currentRecordingTrack != null) {
+            if (trackUiState.recordingTracks.isNotEmpty() ||
+                (trackUiState.isRecordingTrack && trackUiState.currentRecordingTrack != null)) {
                 updateCurrentTrackDisplay()
             }
         }
     }
+    
 
     fun updatePoint(originalPoint: SavedPoint, newName: String, newColor: Color) {
         try {
@@ -288,23 +383,6 @@ fun ChartOnlyScreen(
         return ChartPlotterHelpers.calculateScreenDistance(latLng1, latLng2, map)
     }
 
-    fun startTrackRecording(track: Track) {
-        viewModel.startTrackRecording(track)
-        Log.d("[ChartPlotterScreen]", "항적 기록 시작: ${track.name}")
-    }
-
-    fun stopTrackRecording() {
-        val record = viewModel.stopTrackRecording()
-        if (record != null) {
-            Log.d(
-                "[ChartPlotterScreen]",
-                "항적 기록 저장 완료: ${viewModel.trackUiState.trackPoints.size}개 점"
-            )
-            updateTrackDisplay()
-        }
-        Log.d("[ChartPlotterScreen]", "항적 기록 중지")
-    }
-
     fun addTrackPointIfNeeded(latitude: Double, longitude: Double) {
         val newPoint = viewModel.addTrackPointIfNeeded(latitude, longitude)
         if (newPoint != null) {
@@ -354,6 +432,22 @@ fun ChartOnlyScreen(
     val gpsUiState = viewModel.gpsUiState
     val trackUiState = viewModel.trackUiState
     val dialogUiState = viewModel.dialogUiState
+
+    // 항적 상태 변화 관찰하여 자동으로 표시 업데이트 (디바운싱 적용)
+    LaunchedEffect(trackUiState.recordingTracks) {
+        // 100ms 지연으로 여러 업데이트를 한 번에 처리 (성능 최적화)
+        delay(100)
+        updateCurrentTrackDisplay()
+        
+        // 앱 시작 시 자동 기록을 위한 타이머 시작 (isRecording=true인 항적에 대해서만)
+        trackUiState.recordingTracks.forEach { (trackId, recordingState) ->
+            val track = viewModel.getTracks().find { it.id == trackId }
+            if (track != null && track.intervalType == "time") {
+                // MainActivity의 타이머 시작
+                (activity as MainActivity).startTrackTimerForAutoRecording(track, viewModel)
+            }
+        }
+    }
 
     // 뒤로가기 처리: 설정 화면이나 메뉴가 열려있으면 닫기
     BackHandler(enabled = mapUiState.showMenu) {
@@ -532,73 +626,83 @@ fun ChartOnlyScreen(
         )
     }
 
-    // 항적 설정 다이얼로그
-    if (dialogUiState.showTrackSettingsDialog) {
-        var intervalType by remember { mutableStateOf(viewModel.getTrackSettings().intervalType) }
-        var timeInterval by remember { mutableStateOf(viewModel.getTrackSettings().timeInterval.toString()) }
-        var distanceInterval by remember { mutableStateOf(viewModel.getTrackSettings().distanceInterval.toString()) }
-
+    // 항적 설정 다이얼로그 (항적별 설정 수정)
+    if (dialogUiState.showTrackSettingsDialog && trackUiState.selectedTrackForSettings != null) {
+        val track = trackUiState.selectedTrackForSettings!!
+        var intervalType by remember { mutableStateOf(track.intervalType) }
+        var timeIntervalText by remember { mutableStateOf((track.timeInterval / 1000L).toString()) }
+        var distanceIntervalText by remember { mutableStateOf(track.distanceInterval.toString()) }
+        
         AlertDialog(
-            onDismissRequest = { viewModel.updateShowTrackSettingsDialog(false) },
-            title = { Text("항적 설정") },
+            onDismissRequest = {
+                viewModel.updateShowTrackSettingsDialog(false)
+                viewModel.updateSelectedTrackForSettings(null)
+            },
+            title = { Text("${track.name} 설정") },
             text = {
                 Column {
                     Text("기록 간격 설정:", fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-
-                    // 시간 간격 선택
+                    
+                    // 시간/거리 선택
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.RadioButton(
+                        RadioButton(
                             selected = intervalType == "time",
                             onClick = { intervalType = "time" }
                         )
-                        Text("시간 간격", modifier = Modifier.clickable { intervalType = "time" })
-                        Spacer(modifier = Modifier.width(8.dp))
-                        if (intervalType == "time") {
-                            TextField(
-                                value = timeInterval,
-                                onValueChange = { timeInterval = it },
-                                label = { Text("밀리초") },
-                                modifier = Modifier.width(120.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // 거리 간격 선택
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.RadioButton(
+                        Text("시간", modifier = Modifier.padding(start = 4.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
+                        RadioButton(
                             selected = intervalType == "distance",
                             onClick = { intervalType = "distance" }
                         )
-                        Text(
-                            "거리 간격",
-                            modifier = Modifier.clickable { intervalType = "distance" })
-                        Spacer(modifier = Modifier.width(8.dp))
-                        if (intervalType == "distance") {
-                            TextField(
-                                value = distanceInterval,
-                                onValueChange = { distanceInterval = it },
-                                label = { Text("미터") },
-                                modifier = Modifier.width(120.dp)
-                            )
-                        }
+                        Text("거리", modifier = Modifier.padding(start = 4.dp))
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    if (intervalType == "time") {
+                        TextField(
+                            value = timeIntervalText,
+                            onValueChange = { if (it.all { char -> char.isDigit() }) timeIntervalText = it },
+                            label = { Text("시간 간격 (초)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        TextField(
+                            value = distanceIntervalText,
+                            onValueChange = { if (it.all { char -> char.isDigit() || char == '.' }) distanceIntervalText = it },
+                            label = { Text("거리 간격 (미터)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val settings = TrackSettings(
-                            intervalType = intervalType,
-                            timeInterval = if (intervalType == "time") timeInterval.toLongOrNull()
-                                ?: 5000L else viewModel.getTrackSettings().timeInterval,
-                            distanceInterval = if (intervalType == "distance") distanceInterval.toDoubleOrNull()
-                                ?: 10.0 else viewModel.getTrackSettings().distanceInterval
-                        )
-                        viewModel.saveTrackSettings(settings)
+                        val timeInterval = if (intervalType == "time") {
+                            (timeIntervalText.toLongOrNull() ?: 5L) * 1000L
+                        } else {
+                            track.timeInterval
+                        }
+                        val distanceInterval = if (intervalType == "distance") {
+                            distanceIntervalText.toDoubleOrNull() ?: 10.0
+                        } else {
+                            track.distanceInterval
+                        }
+                        
+                        kotlinx.coroutines.runBlocking {
+                            viewModel.updateTrackSettings(
+                                track.id,
+                                intervalType,
+                                timeInterval,
+                                distanceInterval
+                            )
+                        }
                         viewModel.updateShowTrackSettingsDialog(false)
+                        viewModel.updateSelectedTrackForSettings(null)
+                        updateTrackDisplay()
                     }
                 ) {
                     Text("저장")
@@ -606,7 +710,10 @@ fun ChartOnlyScreen(
             },
             dismissButton = {
                 TextButton(
-                    onClick = { viewModel.updateShowTrackSettingsDialog(false) }
+                    onClick = {
+                        viewModel.updateShowTrackSettingsDialog(false)
+                        viewModel.updateSelectedTrackForSettings(null)
+                    }
                 ) {
                     Text("취소")
                 }
@@ -654,17 +761,30 @@ fun ChartOnlyScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column {
-                                            Text(
-                                                text = track.name,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // 항적 색상 표시
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .background(track.color, CircleShape)
+                                                    .border(1.dp, Color.White, CircleShape)
                                             )
-                                            Text(
-                                                text = "기록 ${track.records.size}개",
-                                                fontSize = 12.sp,
-                                                color = Color.White
-                                            )
+                                            
+                                            Column {
+                                                Text(
+                                                    text = track.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                                Text(
+                                                    text = "포인트 ${track.points.size}개",
+                                                    fontSize = 12.sp,
+                                                    color = Color.White
+                                                )
+                                            }
                                         }
 
                                         Row(
@@ -672,34 +792,68 @@ fun ChartOnlyScreen(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             // 표시/숨김 스위치
-                                            Switch(
-                                                checked = track.isVisible,
-                                                onCheckedChange = {
-                                                    viewModel.setTrackVisibility(
-                                                        track.id,
-                                                        it
-                                                    )
-                                                    updateTrackDisplay()
-                                                }
-                                            )
-
-                                            // 기록 시작 버튼
-                                            if (!trackUiState.isRecordingTrack) {
-                                                TextButton(
-                                                    onClick = {
-                                                        startTrackRecording(track)
-                                                        viewModel.updateShowTrackListDialog(
-                                                            false
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.width(60.dp)
+                                            ) {
+                                                Text(
+                                                    text = "표시",
+                                                    fontSize = 10.sp,
+                                                    color = Color.White
+                                                )
+                                                Switch(
+                                                    checked = track.isVisible,
+                                                    onCheckedChange = {
+                                                        val success = viewModel.setTrackVisibility(
+                                                            track.id,
+                                                            it
                                                         )
+                                                        if (success) {
+                                                            updateTrackDisplay()
+                                                        }
+                                                        // 실패 시 (제한 초과) 다이얼로그는 ViewModel에서 표시됨
                                                     }
-                                                ) {
-                                                    Text("기록", fontSize = 12.sp)
+                                                )
+                                            }
+
+                                            // 기록 on/off 스위치 (단일 항적만 기록 가능)
+                                            val isRecording = viewModel.trackUiState.recordingTracks.containsKey(track.id)
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.width(60.dp)
+                                            ) {
+                                                Text(
+                                                    text = "기록",
+                                                    fontSize = 10.sp,
+                                                    color = Color.White
+                                                )
+                                                Switch(
+                                                    checked = isRecording,
+                                                    onCheckedChange = {
+                                                        // 기록 시작/중지: 다른 항적이 기록 중이면 자동으로 중지되고 저장됨
+                                                        viewModel.toggleTrackRecording(track.id)
+                                                        updateTrackDisplay()
+                                                    }
+                                                )
+                                            }
+
+                                            // 설정 버튼
+                                            TextButton(
+                                                onClick = {
+                                                    // 항적 설정 다이얼로그 표시
+                                                    viewModel.updateSelectedTrackForSettings(track)
+                                                    viewModel.updateShowTrackSettingsDialog(true)
                                                 }
+                                            ) {
+                                                Text("설정", fontSize = 12.sp)
                                             }
 
                                             // 삭제 버튼
                                             TextButton(
                                                 onClick = {
+                                                    if (isRecording) {
+                                                        viewModel.stopTrackRecording(track.id)
+                                                    }
                                                     viewModel.deleteTrack(track.id)
                                                     updateTrackDisplay()
                                                 }
@@ -709,10 +863,15 @@ fun ChartOnlyScreen(
                                         }
                                     }
 
-                                    // 항적 기록 목록
-                                    if (track.records.isNotEmpty()) {
+                                    // 항적 날짜 목록
+                                    val trackDates = remember(track.id) {
+                                        kotlinx.coroutines.runBlocking {
+                                            viewModel.getDatesByTrackId(track.id)
+                                        }
+                                    }
+                                    if (trackDates.isNotEmpty()) {
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        track.records.forEach { record ->
+                                        trackDates.forEach { date ->
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
@@ -721,32 +880,40 @@ fun ChartOnlyScreen(
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
-                                                    text = record.title,
+                                                    text = date,
                                                     fontSize = 11.sp,
                                                     color = Color.White
                                                 )
+                                                // 하이라이트 상태 확인
+                                                val isCurrentlyHighlighted = trackUiState.highlightedTrackRecord != null &&
+                                                        trackUiState.highlightedTrackRecord!!.first == track.id &&
+                                                        trackUiState.highlightedTrackRecord!!.second == date
+                                                
                                                 TextButton(
                                                     onClick = {
-                                                        // 하이라이트 처리
-                                                        viewModel.updateHighlightedTrackRecord(
-                                                            Pair(track.id, record.id)
-                                                        )
+                                                        if (isCurrentlyHighlighted) {
+                                                            // 이미 하이라이트된 경우: 취소
+                                                            viewModel.updateHighlightedTrackRecord(null)
+                                                        } else {
+                                                            // 하이라이트 처리 (날짜별)
+                                                            viewModel.updateHighlightedTrackRecord(
+                                                                Pair(track.id, date)
+                                                            )
+                                                        }
                                                         updateTrackDisplay()
-                                                        viewModel.updateSelectedTrackForRecords(
-                                                            track
-                                                        )
-                                                        viewModel.updateShowTrackRecordListDialog(
-                                                            true
-                                                        )
                                                     }
                                                 ) {
-                                                    Text("보기", fontSize = 10.sp)
+                                                    Text(
+                                                        if (isCurrentlyHighlighted) "취소" else "보기",
+                                                        fontSize = 10.sp,
+                                                        color = if (isCurrentlyHighlighted) Color.Red else Color.White
+                                                    )
                                                 }
                                                 TextButton(
                                                     onClick = {
-                                                        viewModel.deleteTrackRecord(
+                                                        viewModel.deleteTrackPointsByDate(
                                                             track.id,
-                                                            record.id
+                                                            date
                                                         )
                                                         updateTrackDisplay()
                                                     }
@@ -777,6 +944,10 @@ fun ChartOnlyScreen(
 
         // 새 항적 추가 다이얼로그
         if (showNewTrackDialog) {
+            var intervalType by remember { mutableStateOf("time") }
+            var timeIntervalText by remember { mutableStateOf("5") }
+            var distanceIntervalText by remember { mutableStateOf("10") }
+            
             AlertDialog(
                 onDismissRequest = { showNewTrackDialog = false },
                 title = { Text("새 항적 추가") },
@@ -790,7 +961,10 @@ fun ChartOnlyScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("색상 선택:")
-                        Row {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             listOf(
                                 Color.Red,
                                 Color.Blue,
@@ -801,12 +975,47 @@ fun ChartOnlyScreen(
                             ).forEach { color ->
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(48.dp)
                                         .background(color, CircleShape)
+                                        .border(
+                                            width = if (newTrackColor == color) 3.dp else 1.dp,
+                                            color = if (newTrackColor == color) Color.White else Color.Gray,
+                                            shape = CircleShape
+                                        )
                                         .clickable { newTrackColor = color }
-                                        .padding(4.dp)
+                                        .padding(if (newTrackColor == color) 2.dp else 4.dp)
                                 )
                             }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("기록 기준:")
+                        Row {
+                            RadioButton(
+                                selected = intervalType == "time",
+                                onClick = { intervalType = "time" }
+                            )
+                            Text("시간", modifier = Modifier.padding(start = 4.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            RadioButton(
+                                selected = intervalType == "distance",
+                                onClick = { intervalType = "distance" }
+                            )
+                            Text("거리", modifier = Modifier.padding(start = 4.dp))
+                        }
+                        if (intervalType == "time") {
+                            TextField(
+                                value = timeIntervalText,
+                                onValueChange = { if (it.all { char -> char.isDigit() }) timeIntervalText = it },
+                                label = { Text("시간 간격 (초)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            TextField(
+                                value = distanceIntervalText,
+                                onValueChange = { if (it.all { char -> char.isDigit() || char == '.' }) distanceIntervalText = it },
+                                label = { Text("거리 간격 (미터)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
                 },
@@ -814,9 +1023,28 @@ fun ChartOnlyScreen(
                     TextButton(
                         onClick = {
                             if (newTrackName.isNotBlank()) {
-                                viewModel.addTrack(newTrackName, newTrackColor)
+                                val timeInterval = if (intervalType == "time") {
+                                    (timeIntervalText.toLongOrNull() ?: 5L) * 1000L
+                                } else {
+                                    5000L
+                                }
+                                val distanceInterval = if (intervalType == "distance") {
+                                    distanceIntervalText.toDoubleOrNull() ?: 10.0
+                                } else {
+                                    10.0
+                                }
+                                viewModel.addTrack(
+                                    newTrackName, 
+                                    newTrackColor,
+                                    intervalType,
+                                    timeInterval,
+                                    distanceInterval
+                                )
                                 newTrackName = ""
                                 newTrackColor = Color.Red
+                                intervalType = "time"
+                                timeIntervalText = "5"
+                                distanceIntervalText = "10"
                                 showNewTrackDialog = false
                             }
                         }
@@ -835,32 +1063,68 @@ fun ChartOnlyScreen(
         }
     }
 
-    // 항적 기록 목록 다이얼로그
+    // 항적 표시 제한 알림 다이얼로그
+    if (dialogUiState.showTrackLimitDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.updateShowTrackLimitDialog(false) },
+            title = { Text("항적 표시 제한") },
+            text = {
+                Text("화면에 표시할 수 있는 항적 기록은 최대 10개입니다.\n다른 항적을 숨기고 다시 시도해주세요.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.updateShowTrackLimitDialog(false) }
+                ) {
+                    Text("확인")
+                }
+            }
+        )
+    }
+
+    // 항적 날짜 목록 다이얼로그
     if (dialogUiState.showTrackRecordListDialog && trackUiState.selectedTrackForRecords != null) {
+        val trackDates = remember(trackUiState.selectedTrackForRecords!!.id) {
+            kotlinx.coroutines.runBlocking {
+                viewModel.getDatesByTrackId(trackUiState.selectedTrackForRecords!!.id)
+            }
+        }
+        
         AlertDialog(
             onDismissRequest = {
                 viewModel.updateShowTrackRecordListDialog(false)
                 viewModel.updateSelectedTrackForRecords(null)
             },
-            title = { Text("${trackUiState.selectedTrackForRecords!!.name} - 항적 기록") },
+            title = { Text("${trackUiState.selectedTrackForRecords!!.name} - 날짜별 항적") },
             text = {
                 LazyColumn {
-                    items(trackUiState.selectedTrackForRecords!!.records) { record ->
+                    items(trackDates) { date ->
                         val isHighlighted = trackUiState.highlightedTrackRecord != null &&
                                 trackUiState.highlightedTrackRecord!!.first == trackUiState.selectedTrackForRecords!!.id &&
-                                trackUiState.highlightedTrackRecord!!.second == record.id
+                                trackUiState.highlightedTrackRecord!!.second == date
+                        
+                        val pointsCount = remember(date) {
+                            kotlinx.coroutines.runBlocking {
+                                viewModel.getTrackPointsByDate(trackUiState.selectedTrackForRecords!!.id, date).size
+                            }
+                        }
+                        
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                                 .clickable {
-                                    // 하이라이트 처리
-                                    viewModel.updateHighlightedTrackRecord(
-                                        Pair(
-                                            trackUiState.selectedTrackForRecords!!.id,
-                                            record.id
+                                    if (isHighlighted) {
+                                        // 이미 하이라이트된 경우: 취소
+                                        viewModel.updateHighlightedTrackRecord(null)
+                                    } else {
+                                        // 하이라이트 처리
+                                        viewModel.updateHighlightedTrackRecord(
+                                            Pair(
+                                                trackUiState.selectedTrackForRecords!!.id,
+                                                date
+                                            )
                                         )
-                                    )
+                                    }
                                     updateTrackDisplay()
                                 },
                             colors = CardDefaults.cardColors(
@@ -871,17 +1135,34 @@ fun ChartOnlyScreen(
                                 }
                             )
                         ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text(
-                                    text = record.title,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Text(
-                                    text = "점 ${record.points.size}개",
-                                    fontSize = 12.sp,
-                                    color = Color.White
-                                )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = date,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "점 ${pointsCount}개",
+                                        fontSize = 12.sp,
+                                        color = Color.White
+                                    )
+                                }
+                                // 하이라이트 상태 표시
+                                if (isHighlighted) {
+                                    Text(
+                                        text = "✓ 하이라이트",
+                                        fontSize = 11.sp,
+                                        color = Color.Yellow,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                     }
@@ -1199,7 +1480,8 @@ fun ChartOnlyScreen(
                     dialogUiState.showWaypointDialog ||
                     dialogUiState.showTrackSettingsDialog ||
                     dialogUiState.showTrackListDialog ||
-                    dialogUiState.showTrackRecordListDialog,
+                    dialogUiState.showTrackRecordListDialog ||
+                    dialogUiState.showTrackLimitDialog,
             showCursor = mapUiState.showCursor,
             cursorLatLng = mapUiState.cursorLatLng,
             cursorScreenPosition = mapUiState.cursorScreenPosition,
@@ -1264,8 +1546,13 @@ fun ChartOnlyScreen(
                         onGpsLocationUpdate = { lat, lng, available ->
                             viewModel.updateGpsLocation(lat, lng, available)
 
-                            // 항적 기록 점 추가
-                            addTrackPointIfNeeded(lat, lng)
+                            // 항적 기록 점 추가 (MainActivity의 addTrackPointIfNeeded 호출)
+                            if (activity is MainActivity) {
+                                (activity as MainActivity).addTrackPointIfNeeded(lat, lng, viewModel)
+                            } else {
+                                // MainActivity가 아닌 경우 기본 처리
+                                addTrackPointIfNeeded(lat, lng)
+                            }
 
                             // 경유지 자동 제거: 현재 위치에서 10m 이내인 경유지 제거
                             val waypointsToRemove = mutableListOf<SavedPoint>()
@@ -1344,6 +1631,9 @@ fun ChartOnlyScreen(
                         // 저장된 포인트들을 지도에 표시
                         val savedPoints = loadPointsFromLocal()
                         locationManager?.updatePointsOnMap(savedPoints)
+                        
+                        // 앱 시작 시 항적 표시 (항적 화면 노출이 켜져있으면 최근 기록 표시)
+                        updateTrackDisplay()
                     }
 
                     // 지도 터치/드래그 감지하여 자동 추적 중지 (수동 회전은 비활성화)
@@ -1440,13 +1730,23 @@ fun ChartOnlyScreen(
                     if (ContextCompat.checkSelfPermission(
                             activity,
                             Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED ||
+                        ContextCompat.checkSelfPermission(
+                            activity,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
                         ) == PackageManager.PERMISSION_GRANTED
                     ) {
                         locationManager?.startLocationUpdates()
                         // 첫 번째 위치 정보를 받으면 자동으로 그 위치로 이동 (onLocationChanged에서 처리)
                         Log.d("[ChartPlotterScreen]", "위치 추적 시작 - 첫 번째 위치에서 자동 이동")
                     } else {
-                        Log.w("[ChartPlotterScreen]", "위치 권한이 없습니다. MainActivity에서 권한을 요청해야 합니다.")
+                        // MainActivity의 권한 요청 메서드 호출
+                        if (activity is MainActivity) {
+                            (activity as MainActivity).requestLocationPermission()
+                            Log.d("[ChartPlotterScreen]", "위치 권한 요청")
+                        } else {
+                            Log.w("[ChartPlotterScreen]", "위치 권한이 없습니다. MainActivity에서 권한을 요청해야 합니다.")
+                        }
                     }
 
                 }
@@ -1583,7 +1883,7 @@ fun ChartOnlyScreen(
             getNextAvailablePointNumber = { getNextAvailablePointNumber() },
             activity = activity,
             updateMapRotation = { updateMapRotation() },
-            stopTrackRecording = { stopTrackRecording() }
+            updateTrackDisplay = { updateTrackDisplay() }
         )
 
         // 오버레이 (GPS 정보, 커서 정보)
@@ -1597,10 +1897,46 @@ fun ChartOnlyScreen(
             onZoomIn = { viewModel.zoomIn(mapLibreMap) },
             onZoomOut = { viewModel.zoomOut(mapLibreMap) },
             onCurrentLocation = {
-                locationManager?.startAutoTracking()
-                viewModel.updateShowCursor(false)
-                viewModel.updateCursorLatLng(null)
-                viewModel.updateCursorScreenPosition(null)
+                // 위치 권한 확인
+                if (ContextCompat.checkSelfPermission(
+                        activity,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(
+                        activity,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    // 위치 업데이트가 시작되지 않았으면 시작
+                    if (locationManager?.hasLocationPermission() == true) {
+                        locationManager?.startLocationUpdates()
+                    }
+                    
+                    // 현재 위치로 이동
+                    locationManager?.getCurrentLocation()?.let { currentLocation ->
+                        mapLibreMap?.let { map ->
+                            val cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                                .target(currentLocation)
+                                .zoom(map.cameraPosition.zoom)
+                                .bearing(map.cameraPosition.bearing)
+                                .build()
+                            map.cameraPosition = cameraPosition
+                            Log.d("[ChartPlotterScreen]", "현재 위치로 이동: ${currentLocation.latitude}, ${currentLocation.longitude}")
+                        }
+                    }
+                    
+                    // 자동 추적 시작
+                    locationManager?.startAutoTracking()
+                    viewModel.updateShowCursor(false)
+                    viewModel.updateCursorLatLng(null)
+                    viewModel.updateCursorScreenPosition(null)
+                } else {
+                    // 권한이 없으면 권한 요청
+                    if (activity is MainActivity) {
+                        (activity as MainActivity).requestLocationPermission()
+                        Log.d("[ChartPlotterScreen]", "현재 위치 버튼: 위치 권한 요청")
+                    }
+                }
             },
             onAddWaypoint = {
                 mapUiState.cursorLatLng?.let { latLng ->

@@ -32,5 +32,23 @@ interface TrackDao {
     
     @Query("UPDATE tracks SET isVisible = :isVisible WHERE id = :trackId")
     suspend fun updateTrackVisibility(trackId: String, isVisible: Boolean)
+    
+    /**
+     * 항적 기록 상태 업데이트
+     */
+    @Query("UPDATE tracks SET isRecording = :isRecording WHERE id = :trackId")
+    suspend fun updateTrackRecording(trackId: String, isRecording: Boolean)
+    
+    /**
+     * 항적 설정 업데이트
+     */
+    @Query("UPDATE tracks SET intervalType = :intervalType, timeInterval = :timeInterval, distanceInterval = :distanceInterval WHERE id = :trackId")
+    suspend fun updateTrackSettings(trackId: String, intervalType: String, timeInterval: Long, distanceInterval: Double)
+    
+    /**
+     * 현재 기록 중인 항적 목록 조회
+     */
+    @Query("SELECT * FROM tracks WHERE isRecording = 1")
+    suspend fun getRecordingTracks(): List<TrackEntity>
 }
 

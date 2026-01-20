@@ -6,30 +6,32 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * 항적 포인트 Entity
+ * 항적 포인트 Entity (Track에 직접 연결)
  */
 @Entity(
     tableName = "track_points",
     foreignKeys = [
         ForeignKey(
-            entity = TrackRecordEntity::class,
+            entity = TrackEntity::class,
             parentColumns = ["id"],
-            childColumns = ["recordId"],
+            childColumns = ["trackId"],
             onDelete = ForeignKey.CASCADE
         )
     ],
     indices = [
-        Index("recordId"),
-        Index("recordId", "sequence") // 순서대로 조회를 위한 복합 인덱스
+        Index("trackId"),
+        Index("trackId", "timestamp"), // 항적별 시간순 조회를 위한 복합 인덱스
+        Index("timestamp"), // 날짜별 조회를 위한 인덱스
+        Index("trackId", "date") // 항적별 날짜별 조회를 위한 복합 인덱스
     ]
 )
 data class TrackPointEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val recordId: String,
+    val trackId: String, // Track에 직접 연결 (recordId 제거)
     val latitude: Double,
     val longitude: Double,
     val timestamp: Long,
-    val sequence: Int // 포인트 순서 (0부터 시작)
+    val date: String // 날짜 (yyyy-MM-dd 형식) - 날짜별 조회를 위해 추가
 )
 

@@ -1056,74 +1056,312 @@ object PMTilesLoader {
     }
     
     /**
-     * 항적 선을 추가합니다
+     * 항적 점 마커를 추가합니다 (점이 1개일 때 사용)
      */
-    fun addTrackLine(map: MapLibreMap, sourceId: String, points: List<LatLng>, color: androidx.compose.ui.graphics.Color, isHighlighted: Boolean = false) {
-        if (points.size < 2) return
-        
+    fun addTrackPointMarker(map: MapLibreMap, sourceId: String, point: LatLng, color: androidx.compose.ui.graphics.Color) {
         map.getStyle { style ->
             try {
-                // GeoJSON LineString 생성
-                val coordinates = points.map { listOf(it.longitude, it.latitude) }
-                val lineString = org.json.JSONObject().apply {
-                    put("type", "LineString")
-                    put("coordinates", org.json.JSONArray(coordinates))
-                }
+                // 마커용 별도 소스 ID (선과 구분)
+                val markerSourceId = "${sourceId}_marker"
+                val layerId = "${sourceId}_marker_layer"
+                
+                // GeoJSON Point 생성
                 val feature = org.json.JSONObject().apply {
                     put("type", "Feature")
-                    put("geometry", lineString)
+                    put("geometry", org.json.JSONObject().apply {
+                        put("type", "Point")
+                        put("coordinates", org.json.JSONArray(listOf(point.longitude, point.latitude)))
+                    })
                 }
                 val featureCollection = org.json.JSONObject().apply {
                     put("type", "FeatureCollection")
                     put("features", org.json.JSONArray(listOf(feature)))
                 }
                 
-                // 기존 소스가 있으면 제거
-                if (style.getSource(sourceId) != null) {
-                    style.removeSource(sourceId)
-                }
-                if (style.getLayer("${sourceId}_layer") != null) {
-                    style.removeLayer("${sourceId}_layer")
-                }
-                
-                // GeoJsonSource 추가
-                val source = GeoJsonSource(sourceId, featureCollection.toString())
-                style.addSource(source)
-                
-                // 하이라이트 여부에 따라 선 두께와 색상 조정
-                val lineWidth = if (isHighlighted) 5.0f else 2.0f
-                val lineOpacity = if (isHighlighted) 1.0f else 0.8f
-                
-                // 하이라이트된 경우 흰색 테두리 효과를 위해 두 개의 레이어 사용
-                if (isHighlighted) {
-                    // 배경 레이어 (흰색, 더 두껍게)
-                    val backgroundLayer = LineLayer("${sourceId}_bg_layer", sourceId)
-                        .withProperties(
-                            PropertyFactory.lineColor(android.graphics.Color.WHITE),
-                            PropertyFactory.lineWidth(lineWidth + 2.0f),
-                            PropertyFactory.lineOpacity(0.6f),
-                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
-                        )
-                    style.addLayer(backgroundLayer)
+                // 기존 레이어 제거 (소스는 유지하고 데이터만 업데이트)
+                try {
+                    if (style.getLayer(layerId) != null) {
+                        style.removeLayer(layerId)
+                    }
+                } catch (e: Exception) {
+                    Log.w("[PMTilesLoader]", "마커 레이어 제거 실패: $layerId, ${e.message}")
                 }
                 
-                // 메인 레이어
-                val trackLineLayer = LineLayer("${sourceId}_layer", sourceId)
+                // 기존 소스가 있으면 데이터만 업데이트, 없으면 새로 추가
+                val existingSource = style.getSource(markerSourceId)
+                if (existingSource != null) {
+                    try {
+                        val geoJsonSource = existingSource as? GeoJsonSource
+                        geoJsonSource?.setGeoJson(featureCollection.toString())
+                    } catch (e: Exception) {
+                        Log.w("[PMTilesLoader]", "마커 소스 업데이트 실패, 재생성 시도: ${e.message}")
+                        try {
+                            style.removeSource(markerSourceId)
+                            val newSource = GeoJsonSource(markerSourceId, featureCollection.toString())
+                            style.addSource(newSource)
+                        } catch (e2: Exception) {
+                            Log.e("[PMTilesLoader]", "마커 소스 재생성 실패: ${e2.message}")
+                            return@getStyle
+                        }
+                    }
+                } else {
+                    try {
+                        val source = GeoJsonSource(markerSourceId, featureCollection.toString())
+                        style.addSource(source)
+                    } catch (e: Exception) {
+                        Log.e("[PMTilesLoader]", "마커 소스 추가 실패: $markerSourceId, ${e.message}")
+                        return@getStyle
+                    }
+                }
+                
+                // CircleLayer로 점 마커 추가 (선 색과 동일한 색, 선 굵기보다 아주 조금만 크게)
+                val markerLayer = CircleLayer(layerId, markerSourceId)
                     .withProperties(
-                        PropertyFactory.lineColor(android.graphics.Color.rgb(
+                        PropertyFactory.circleColor(android.graphics.Color.rgb(
                             (color.red * 255).toInt(),
                             (color.green * 255).toInt(),
                             (color.blue * 255).toInt()
                         )),
-                        PropertyFactory.lineWidth(lineWidth),
-                        PropertyFactory.lineOpacity(lineOpacity),
-                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                        PropertyFactory.circleRadius(0.8f), // 선 굵기(1.5f)보다 아주 조금만 크게
+                        PropertyFactory.circleOpacity(1.0f),
+                        PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(
+                            (color.red * 255).toInt(),
+                            (color.green * 255).toInt(),
+                            (color.blue * 255).toInt()
+                        )),
+                        PropertyFactory.circleStrokeWidth(0.5f) // 테두리도 얇게
                     )
-                style.addLayer(trackLineLayer)
                 
-                Log.d("[PMTilesLoader]", "항적 선 추가됨: $sourceId (${points.size}개 점, 하이라이트: $isHighlighted)")
+                try {
+                    style.addLayer(markerLayer)
+                } catch (e: Exception) {
+                    Log.e("[PMTilesLoader]", "마커 레이어 추가 실패: ${e.message}")
+                    return@getStyle
+                }
+                
+                Log.d("[PMTilesLoader]", "항적 점 마커 추가됨: $markerSourceId")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "항적 점 마커 추가 실패: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * 항적 선을 추가합니다 (각 점마다 마커도 함께 표시)
+     */
+    fun addTrackLine(map: MapLibreMap, sourceId: String, points: List<LatLng>, color: androidx.compose.ui.graphics.Color, isHighlighted: Boolean = false) {
+        if (points.isEmpty()) return
+        
+        map.getStyle { style ->
+            try {
+                // 선용 GeoJSON (점이 2개 이상일 때만)
+                val lineFeatureCollection = if (points.size >= 2) {
+                    val coordinates = points.map { listOf(it.longitude, it.latitude) }
+                    val lineString = org.json.JSONObject().apply {
+                        put("type", "LineString")
+                        put("coordinates", org.json.JSONArray(coordinates))
+                    }
+                    val feature = org.json.JSONObject().apply {
+                        put("type", "Feature")
+                        put("geometry", lineString)
+                    }
+                    org.json.JSONObject().apply {
+                        put("type", "FeatureCollection")
+                        put("features", org.json.JSONArray(listOf(feature)))
+                    }
+                } else null
+                
+                // 점 마커용 GeoJSON (모든 점마다)
+                val pointFeatures = points.map { point ->
+                    org.json.JSONObject().apply {
+                        put("type", "Feature")
+                        put("geometry", org.json.JSONObject().apply {
+                            put("type", "Point")
+                            put("coordinates", org.json.JSONArray(listOf(point.longitude, point.latitude)))
+                        })
+                    }
+                }
+                val pointFeatureCollection = org.json.JSONObject().apply {
+                    put("type", "FeatureCollection")
+                    put("features", org.json.JSONArray(pointFeatures))
+                }
+                
+                // 점 마커용 소스 ID
+                val pointSourceId = "${sourceId}_points"
+                val pointLayerId = "${sourceId}_points_layer"
+                
+                // 기존 소스와 레이어를 안전하게 제거
+                try {
+                    // 선 소스 제거
+                    val existingLineSource = style.getSource(sourceId)
+                    if (existingLineSource != null) {
+                        val bgLayerId = "${sourceId}_bg_layer"
+                        val layerId = "${sourceId}_layer"
+                        try {
+                            if (style.getLayer(bgLayerId) != null) {
+                                style.removeLayer(bgLayerId)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("[PMTilesLoader]", "배경 레이어 제거 실패: $bgLayerId, ${e.message}")
+                        }
+                        try {
+                            if (style.getLayer(layerId) != null) {
+                                style.removeLayer(layerId)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("[PMTilesLoader]", "레이어 제거 실패: $layerId, ${e.message}")
+                        }
+                        style.removeSource(sourceId)
+                    }
+                    
+                    // 점 마커 소스 제거
+                    val existingPointSource = style.getSource(pointSourceId)
+                    if (existingPointSource != null) {
+                        try {
+                            if (style.getLayer(pointLayerId) != null) {
+                                style.removeLayer(pointLayerId)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("[PMTilesLoader]", "점 마커 레이어 제거 실패: $pointLayerId, ${e.message}")
+                        }
+                        style.removeSource(pointSourceId)
+                    }
+                } catch (e: Exception) {
+                    Log.w("[PMTilesLoader]", "기존 소스 제거 실패: $sourceId, ${e.message}")
+                }
+                
+                // 선 추가 (점이 2개 이상일 때만)
+                if (lineFeatureCollection != null) {
+                    val lineSource = GeoJsonSource(sourceId, lineFeatureCollection.toString())
+                    try {
+                        style.addSource(lineSource)
+                    } catch (e: Exception) {
+                        if (e.message?.contains("already exists") == true) {
+                            try {
+                                val existingSource = style.getSource(sourceId) as? GeoJsonSource
+                                existingSource?.setGeoJson(lineFeatureCollection.toString())
+                            } catch (updateException: Exception) {
+                                Log.e("[PMTilesLoader]", "선 소스 데이터 업데이트 실패: $sourceId, ${updateException.message}")
+                                return@getStyle
+                            }
+                        } else {
+                            Log.e("[PMTilesLoader]", "선 소스 추가 실패: $sourceId, ${e.message}")
+                            return@getStyle
+                        }
+                    }
+                    
+                    // 하이라이트 여부에 따라 효과 조정 (굵기는 유지, 하이라이트 느낌만)
+                    val lineWidth = 1.5f // 굵기는 항상 동일
+                    
+                    // 하이라이트된 경우 흰색 테두리 효과 (글로우 효과)
+                    if (isHighlighted) {
+                        // 배경 레이어 (흰색, 약간 더 두껍게 - 글로우 효과)
+                        val backgroundLayer = LineLayer("${sourceId}_bg_layer", sourceId)
+                            .withProperties(
+                                PropertyFactory.lineColor(android.graphics.Color.WHITE),
+                                PropertyFactory.lineWidth(lineWidth + 2.0f), // 테두리 효과
+                                PropertyFactory.lineOpacity(0.7f), // 반투명 흰색 테두리
+                                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                            )
+                        style.addLayer(backgroundLayer)
+                    }
+                    
+                    // 메인 선 레이어 (하이라이트 시 색상을 더 밝게)
+                    val baseColor = android.graphics.Color.rgb(
+                        (color.red * 255).toInt(),
+                        (color.green * 255).toInt(),
+                        (color.blue * 255).toInt()
+                    )
+                    
+                    // 하이라이트 시 색상을 더 밝게 (RGB 값을 증가)
+                    val lineColor = if (isHighlighted) {
+                        android.graphics.Color.rgb(
+                            ((color.red * 255).toInt() + 50).coerceAtMost(255),
+                            ((color.green * 255).toInt() + 50).coerceAtMost(255),
+                            ((color.blue * 255).toInt() + 50).coerceAtMost(255)
+                        )
+                    } else {
+                        baseColor
+                    }
+                    
+                    val trackLineLayer = LineLayer("${sourceId}_layer", sourceId)
+                        .withProperties(
+                            PropertyFactory.lineColor(lineColor),
+                            PropertyFactory.lineWidth(lineWidth), // 굵기는 항상 동일
+                            PropertyFactory.lineOpacity(if (isHighlighted) 1.0f else 0.8f), // 하이라이트 시 더 선명하게
+                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                        )
+                    style.addLayer(trackLineLayer)
+                }
+                
+                // 점 마커 추가 (모든 점마다)
+                val pointSource = GeoJsonSource(pointSourceId, pointFeatureCollection.toString())
+                try {
+                    style.addSource(pointSource)
+                } catch (e: Exception) {
+                    if (e.message?.contains("already exists") == true) {
+                        try {
+                            val existingSource = style.getSource(pointSourceId) as? GeoJsonSource
+                            existingSource?.setGeoJson(pointFeatureCollection.toString())
+                        } catch (updateException: Exception) {
+                            Log.e("[PMTilesLoader]", "점 마커 소스 데이터 업데이트 실패: $pointSourceId, ${updateException.message}")
+                            return@getStyle
+                        }
+                    } else {
+                        Log.e("[PMTilesLoader]", "점 마커 소스 추가 실패: $pointSourceId, ${e.message}")
+                        return@getStyle
+                    }
+                }
+                
+                // 점 마커 레이어 추가 (하이라이트 여부에 따라 색상 조정)
+                val pointBaseColor = android.graphics.Color.rgb(
+                    (color.red * 255).toInt(),
+                    (color.green * 255).toInt(),
+                    (color.blue * 255).toInt()
+                )
+                
+                // 하이라이트 시 점 마커도 더 밝게
+                val pointColor = if (isHighlighted) {
+                    android.graphics.Color.rgb(
+                        ((color.red * 255).toInt() + 50).coerceAtMost(255),
+                        ((color.green * 255).toInt() + 50).coerceAtMost(255),
+                        ((color.blue * 255).toInt() + 50).coerceAtMost(255)
+                    )
+                } else {
+                    pointBaseColor
+                }
+                
+                // 하이라이트 시 점 마커에 흰색 테두리 효과
+                if (isHighlighted) {
+                    val pointBackgroundLayer = CircleLayer("${pointLayerId}_bg", pointSourceId)
+                        .withProperties(
+                            PropertyFactory.circleColor(android.graphics.Color.WHITE),
+                            PropertyFactory.circleRadius(0.8f + 1.0f), // 테두리 효과
+                            PropertyFactory.circleOpacity(0.6f),
+                            PropertyFactory.circleStrokeWidth(0f)
+                        )
+                    style.addLayer(pointBackgroundLayer)
+                }
+                
+                val pointMarkerLayer = CircleLayer(pointLayerId, pointSourceId)
+                    .withProperties(
+                        PropertyFactory.circleColor(pointColor),
+                        PropertyFactory.circleRadius(0.8f), // 선 굵기(1.5f)보다 아주 조금만 크게
+                        PropertyFactory.circleOpacity(if (isHighlighted) 1.0f else 1.0f),
+                        PropertyFactory.circleStrokeColor(android.graphics.Color.rgb(
+                            (color.red * 255).toInt(),
+                            (color.green * 255).toInt(),
+                            (color.blue * 255).toInt()
+                        )),
+                        PropertyFactory.circleStrokeWidth(0.5f) // 테두리도 얇게
+                    )
+                style.addLayer(pointMarkerLayer)
+                
+                Log.d("[PMTilesLoader]", "항적 선 및 점 마커 추가됨: $sourceId (${points.size}개 점, 하이라이트: $isHighlighted)")
                 
             } catch (e: Exception) {
                 Log.e("[PMTilesLoader]", "항적 선 추가 실패: ${e.message}")
@@ -1143,14 +1381,18 @@ object PMTilesLoader {
                 
                 style.layers.forEach { layer ->
                     val layerId = layer.id
-                    if (layerId.contains("track_") || layerId == "current_track_layer" || layerId.contains("_bg_layer")) {
+                    if (layerId.contains("track_") || layerId == "current_track_layer" || 
+                        layerId.startsWith("current_track_") || layerId.contains("_bg_layer") ||
+                        layerId.contains("_marker_layer")) {
                         layersToRemove.add(layerId)
                     }
                 }
                 
                 style.sources.forEach { source ->
                     val sourceId = source.id
-                    if (sourceId.contains("track_") || sourceId == "current_track") {
+                    if (sourceId.contains("track_") || sourceId == "current_track" || 
+                        sourceId.startsWith("current_track_") || sourceId.contains("_marker") ||
+                        sourceId.contains("_points")) {
                         sourcesToRemove.add(sourceId)
                     }
                 }

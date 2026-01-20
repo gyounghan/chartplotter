@@ -18,7 +18,10 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("trackId")]
+    indices = [
+        Index("trackId"),
+        Index("date") // 날짜별 조회를 위한 인덱스
+    ]
 )
 data class TrackRecordEntity(
     @PrimaryKey
@@ -26,6 +29,7 @@ data class TrackRecordEntity(
     val trackId: String,
     val startTime: Long,
     val endTime: Long,
-    val title: String
+    val title: String,
+    val date: String // 날짜 (yyyy-MM-dd 형식)
 )
 

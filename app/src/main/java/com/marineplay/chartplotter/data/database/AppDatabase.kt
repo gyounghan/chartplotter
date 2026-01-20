@@ -13,18 +13,14 @@ import com.marineplay.chartplotter.data.database.entities.*
 @Database(
     entities = [
         TrackEntity::class,
-        TrackRecordEntity::class,
-        TrackPointEntity::class,
-        TrackSettingsEntity::class
+        TrackPointEntity::class
     ],
-    version = 1,
+    version = 4, // TrackRecordEntity 제거, TrackPointEntity 구조 변경
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun trackDao(): TrackDao
-    abstract fun trackRecordDao(): TrackRecordDao
     abstract fun trackPointDao(): TrackPointDao
-    abstract fun trackSettingsDao(): TrackSettingsDao
     
     companion object {
         @Volatile

@@ -1,38 +1,17 @@
 package com.marineplay.chartplotter.domain.usecases
 
-import com.marineplay.chartplotter.TrackManager
-import com.marineplay.chartplotter.TrackPoint
-
 /**
  * 항적 기록 중지 UseCase
+ * TrackPoint는 이미 실시간으로 저장되므로, 이 UseCase는 더 이상 필요 없습니다.
+ * 하지만 하위 호환성을 위해 유지합니다.
  */
-class StopTrackRecordingUseCase(
-    private val trackManager: TrackManager
-) {
+class StopTrackRecordingUseCase {
     /**
-     * 항적 기록을 중지하고 저장합니다.
-     * @param trackId 항적 ID
-     * @param startTime 시작 시간
-     * @param endTime 종료 시간
-     * @param points 기록된 포인트 목록
-     * @return 저장된 항적 기록 (실패 시 null)
+     * 항적 기록을 중지합니다.
+     * TrackPoint는 이미 실시간으로 저장되었으므로, 별도 저장 작업은 필요 없습니다.
      */
-    fun execute(
-        trackId: String,
-        startTime: Long,
-        endTime: Long,
-        points: List<TrackPoint>
-    ): com.marineplay.chartplotter.TrackRecord? {
-        if (points.isEmpty()) {
-            return null
-        }
-        
-        return trackManager.addTrackRecord(
-            trackId = trackId,
-            startTime = startTime,
-            endTime = endTime,
-            points = points
-        )
+    fun execute() {
+        // TrackPoint는 이미 실시간으로 저장되었으므로, 아무 작업도 하지 않습니다.
     }
 }
 

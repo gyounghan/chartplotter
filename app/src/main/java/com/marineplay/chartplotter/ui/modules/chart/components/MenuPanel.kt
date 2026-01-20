@@ -36,7 +36,7 @@ fun MenuPanel(
     loadPointsFromLocal: () -> List<SavedPoint>,
     getNextAvailablePointNumber: () -> Int,
     updateMapRotation: () -> Unit,
-    stopTrackRecording: () -> Unit,
+    updateTrackDisplay: () -> Unit,
     activity: ComponentActivity? = null
 ) {
     val mapUiState = viewModel.mapUiState
@@ -132,7 +132,7 @@ fun MenuPanel(
                         MenuTrackContent(
                             viewModel = viewModel,
                             trackUiState = trackUiState,
-                            stopTrackRecording = stopTrackRecording
+                            updateTrackDisplay = updateTrackDisplay
                         )
                     }
 
@@ -349,26 +349,15 @@ private fun MenuNavigationContent(
 private fun MenuTrackContent(
     viewModel: MainViewModel,
     trackUiState: com.marineplay.chartplotter.viewmodel.TrackUiState,
-    stopTrackRecording: () -> Unit
+    updateTrackDisplay: () -> Unit
 ) {
-    Text(
-        "항적 설정",
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .clickable {
-                viewModel.updateShowTrackSettingsDialog(true)
-                viewModel.updateShowMenu(false)
-                viewModel.updateCurrentMenu("main")
-            },
-        color = Color.White
-    )
     Text(
         "항적 목록",
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
             .clickable {
+                // 항적 목록: 모든 항적을 보고 관리 (추가, 삭제, 표시/숨김, 기록 on/off)
                 viewModel.updateShowTrackListDialog(true)
                 viewModel.updateShowMenu(false)
                 viewModel.updateCurrentMenu("main")
@@ -383,7 +372,11 @@ private fun MenuTrackContent(
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
                 .clickable {
-                    stopTrackRecording()
+                    val currentTrack = trackUiState.currentRecordingTrack
+                    if (currentTrack != null) {
+                        viewModel.stopTrackRecording(currentTrack.id)
+                        updateTrackDisplay()
+                    }
                     viewModel.updateShowMenu(false)
                     viewModel.updateCurrentMenu("main")
                 },

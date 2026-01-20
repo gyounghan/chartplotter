@@ -127,6 +127,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.CompositionLocalProvider
 import org.maplibre.android.geometry.LatLngBounds
 import android.R.attr.onClick
+import com.marineplay.chartplotter.domain.entities.Track
+import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 
 
@@ -158,14 +160,15 @@ class MainActivity : ComponentActivity() {
     // 헬퍼들
     private lateinit var pointHelper: PointHelper
     private lateinit var destinationHelper: DestinationHelper
-    private lateinit var trackManager: TrackManager
+    private lateinit var trackRepository: com.marineplay.chartplotter.domain.repositories.TrackRepository
     private lateinit var sharedPreferences: SharedPreferences
 
     // Handler 및 Runnable (줌, 항적 타이머 등)
     private var zoomHandler: android.os.Handler? = null
     private var zoomRunnable: Runnable? = null
-    private var trackTimerHandler: android.os.Handler? = null
-    private var trackTimerRunnable: Runnable? = null
+    // 여러 항적 동시 기록을 위한 타이머 관리
+    private val trackTimerHandlers = mutableMapOf<String, android.os.Handler>() // trackId -> Handler
+    private val trackTimerRunnables = mutableMapOf<String, Runnable>() // trackId -> Runnable
     
     // ViewModel 참조 (onKeyDown에서 사용하기 위해)
     private var mainViewModel: MainViewModel? = null
@@ -325,186 +328,142 @@ class MainActivity : ComponentActivity() {
         return DistanceCalculator.calculateScreenDistance(clickLatLng, targetLatLng, map)
     }
     
-    // 항적 기록 시작
+    // 항적 기록 시작 (단일 항적만 기록 가능)
     private fun startTrackRecording(track: Track, viewModel: MainViewModel) {
-        viewModel.updateCurrentRecordingTrack(track)
-        viewModel.updateIsRecordingTrack(true)
-        viewModel.updateTrackRecordingStartTime(System.currentTimeMillis())
-        viewModel.clearTrackPoints()
+        // 기존에 기록 중인 항적이 있으면 타이머 정지
+        val currentRecordingTracks = viewModel.trackUiState.recordingTracks
+        currentRecordingTracks.keys.forEach { existingTrackId ->
+            stopTrackRecording(existingTrackId, viewModel)
+        }
+        
+        // ViewModel에서 기록 시작 (기존 항적은 자동으로 중지됨)
+        viewModel.startTrackRecording(track)
         
         // 시간 간격 설정인 경우 타이머 시작
-        val settings = trackManager.settings
-        if (settings.intervalType == "time") {
-            trackTimerHandler = android.os.Handler(android.os.Looper.getMainLooper())
-            trackTimerRunnable = object : Runnable {
-                override fun run() {
-                    val trackUiState = viewModel.trackUiState
-                    val gpsUiState = viewModel.gpsUiState
-                    if (trackUiState.isRecordingTrack && gpsUiState.lastGpsLocation != null) {
-                        // 마지막 GPS 위치를 항적 점으로 추가
-                        val currentTime = System.currentTimeMillis()
-                        val lastGpsLocation = gpsUiState.lastGpsLocation!!
-                        viewModel.addTrackPoint(TrackPoint(
-                            lastGpsLocation.latitude,
-                            lastGpsLocation.longitude,
-                            currentTime
-                        ))
-                        
-                        // 실시간 항적 표시 업데이트
-                        updateCurrentTrackDisplay(viewModel)
-                        
-                        // 다음 타이머 예약
-                        trackTimerHandler?.postDelayed(this, settings.timeInterval)
-                    }
+        if (track.intervalType == "time") {
+            startTrackTimer(track.id, track.timeInterval, viewModel)
+        }
+        
+        Log.d("[MainActivity]", "항적 기록 시작: ${track.name} (간격: ${if (track.intervalType == "time") "${track.timeInterval}ms" else "${track.distanceInterval}m"})")
+    }
+    
+    // 항적 타이머 시작
+    private fun startTrackTimer(trackId: String, timeInterval: Long, viewModel: MainViewModel) {
+        // 이미 타이머가 실행 중이면 시작하지 않음
+        if (trackTimerHandlers.containsKey(trackId) && trackTimerRunnables.containsKey(trackId)) {
+            Log.d("[MainActivity]", "타이머가 이미 실행 중입니다: $trackId")
+            return
+        }
+        
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val runnable = object : Runnable {
+            override fun run() {
+                val trackUiState = viewModel.trackUiState
+                val gpsUiState = viewModel.gpsUiState
+                val recordingState = trackUiState.recordingTracks[trackId]
+                
+                if (recordingState != null && gpsUiState.lastGpsLocation != null) {
+                    // 마지막 GPS 위치를 항적 점으로 추가
+                    val lastGpsLocation = gpsUiState.lastGpsLocation!!
+                    
+                    // ViewModel을 통해 점 추가 (타이머에서 호출되었음을 표시)
+                    viewModel.addTrackPointIfNeeded(lastGpsLocation.latitude, lastGpsLocation.longitude, isTimerTriggered = true)
+                    
+                    // 다음 타이머 예약
+                    handler.postDelayed(this, timeInterval)
+                } else {
+                    Log.w("[MainActivity]", "타이머 실행 중 GPS 위치 또는 기록 상태 없음: $trackId")
                 }
             }
-            // 첫 번째 점은 즉시 추가하지 않고, GPS 업데이트를 기다림
-            // 타이머는 GPS 위치가 업데이트된 후 시작
         }
         
-        Log.d("[MainActivity]", "항적 기록 시작: ${track.name} (간격: ${if (settings.intervalType == "time") "${settings.timeInterval}ms" else "${settings.distanceInterval}m"})")
+        trackTimerHandlers[trackId] = handler
+        trackTimerRunnables[trackId] = runnable
+        
+        // 타이머 즉시 시작 (첫 번째 점은 GPS 업데이트 시 추가되므로, 이후부터 주기적으로 추가)
+        handler.postDelayed(runnable, timeInterval)
+        Log.d("[MainActivity]", "타이머 시작: $trackId (간격: ${timeInterval}ms)")
     }
     
-    // 항적 기록 중지
-    private fun stopTrackRecording(viewModel: MainViewModel) {
-        val trackUiState = viewModel.trackUiState
-        if (!trackUiState.isRecordingTrack || trackUiState.currentRecordingTrack == null) return
+    // 앱 시작 시 자동 기록을 위한 타이머 시작 (외부에서 호출 가능)
+    fun startTrackTimerForAutoRecording(track: Track, viewModel: MainViewModel) {
+        if (track.intervalType == "time") {
+            startTrackTimer(track.id, track.timeInterval, viewModel)
+        }
+    }
+    
+    // 항적 기록 중지 (특정 항적)
+    private fun stopTrackRecording(trackId: String? = null, viewModel: MainViewModel) {
+        val targetTrackId = trackId ?: viewModel.trackUiState.currentRecordingTrack?.id
+        if (targetTrackId == null) return
         
         // 타이머 정지
-        trackTimerRunnable?.let { runnable ->
-            trackTimerHandler?.removeCallbacks(runnable)
+        trackTimerRunnables[targetTrackId]?.let { runnable ->
+            trackTimerHandlers[targetTrackId]?.removeCallbacks(runnable)
         }
-        trackTimerHandler = null
-        trackTimerRunnable = null
+        trackTimerHandlers.remove(targetTrackId)
+        trackTimerRunnables.remove(targetTrackId)
         
-        val endTime = System.currentTimeMillis()
-        if (trackUiState.trackPoints.isNotEmpty()) {
-            trackManager.addTrackRecord(
-                trackId = trackUiState.currentRecordingTrack!!.id,
-                startTime = trackUiState.trackRecordingStartTime,
-                endTime = endTime,
-                points = trackUiState.trackPoints.toList()
-            )
-            Log.d("[MainActivity]", "항적 기록 저장 완료: ${trackUiState.trackPoints.size}개 점")
-            
-            // 항적 표시 업데이트
-            updateTrackDisplay(viewModel)
-        }
+        // ViewModel에서 기록 중지 (여러 항적 동시 기록 지원)
+        viewModel.stopTrackRecording(targetTrackId)
         
-        viewModel.updateCurrentRecordingTrack(null)
-        viewModel.updateIsRecordingTrack(false)
-        viewModel.clearTrackPoints()
-        Log.d("[MainActivity]", "항적 기록 중지")
+        Log.d("[MainActivity]", "항적 기록 중지: $targetTrackId")
     }
     
-    // GPS 위치 업데이트 시 항적 점 추가
-    private fun addTrackPointIfNeeded(latitude: Double, longitude: Double, viewModel: MainViewModel) {
+    // GPS 위치 업데이트 시 항적 점 추가 (여러 항적 동시 기록 지원)
+    internal fun addTrackPointIfNeeded(latitude: Double, longitude: Double, viewModel: MainViewModel) {
         val trackUiState = viewModel.trackUiState
-        if (!trackUiState.isRecordingTrack || trackUiState.currentRecordingTrack == null) return
+        if (trackUiState.recordingTracks.isEmpty()) return
         
         val currentTime = System.currentTimeMillis()
-        val currentLocation = LatLng(latitude, longitude)
-        val settings = trackManager.settings
         
         // 마지막 GPS 위치 업데이트
         viewModel.updateGpsLocation(latitude, longitude, true)
         
-        when (settings.intervalType) {
-            "time" -> {
-                // 시간 간격 기준: 타이머가 처리하므로 여기서는 첫 번째 점만 추가하고 타이머 시작
-                if (trackUiState.lastTrackPointTime == 0L) {
-                    // 첫 번째 점 추가
-                    viewModel.addTrackPoint(TrackPoint(latitude, longitude, currentTime))
-                    
-                    // 타이머 시작 (설정한 시간 간격마다 점 추가)
-                    trackTimerRunnable?.let { runnable ->
-                        trackTimerHandler?.postDelayed(runnable, settings.timeInterval)
+        // 각 기록 중인 항적에 대해 처리
+        trackUiState.recordingTracks.forEach { (trackId, recordingState) ->
+            // ViewModel의 캐시를 사용하여 항적 정보 가져오기 (성능 최적화)
+            val track = viewModel.getTrack(trackId) ?: return@forEach
+            
+            when (track.intervalType) {
+                "time" -> {
+                    // 시간 간격 기준: 첫 번째 점 추가 후 타이머 시작
+                    if (recordingState.lastTrackPointTime == 0L) {
+                        // 첫 번째 점 추가
+                        viewModel.addTrackPointIfNeeded(latitude, longitude)
+                        
+                        // 타이머 시작 (설정한 시간 간격마다 점 추가)
+                        startTrackTimer(trackId, track.timeInterval, viewModel)
                     }
-                    
-                    // 실시간 항적 표시 업데이트
-                    updateCurrentTrackDisplay(viewModel)
+                    // 이후 점들은 타이머가 추가함
                 }
-                // 이후 점들은 타이머가 추가함
-            }
-            "distance" -> {
-                // 거리 간격 기준: GPS 업데이트마다 거리 체크
-                var shouldAddPoint = false
-                
-                if (trackUiState.lastTrackPointLocation == null) {
-                    // 첫 번째 점
-                    shouldAddPoint = true
-                } else {
-                    val distance = calculateDistance(
-                        trackUiState.lastTrackPointLocation!!.latitude,
-                        trackUiState.lastTrackPointLocation!!.longitude,
-                        latitude,
-                        longitude
-                    )
-                    if (distance >= settings.distanceInterval) {
+                "distance" -> {
+                    // 거리 간격 기준: GPS 업데이트마다 거리 체크
+                    var shouldAddPoint = false
+                    
+                    if (recordingState.lastTrackPointLocation == null) {
+                        // 첫 번째 점
                         shouldAddPoint = true
-                    }
-                }
-                
-                if (shouldAddPoint) {
-                    viewModel.addTrackPoint(TrackPoint(latitude, longitude, currentTime))
-                    
-                    // 실시간으로 항적 표시 업데이트
-                    updateCurrentTrackDisplay(viewModel)
-                }
-            }
-        }
-    }
-    
-    // 현재 기록 중인 항적 표시 업데이트
-    private fun updateCurrentTrackDisplay(viewModel: MainViewModel) {
-        val trackUiState = viewModel.trackUiState
-        if (trackUiState.trackPoints.isEmpty() || trackUiState.currentRecordingTrack == null) return
-        
-        mapLibreMap?.let { map ->
-            val points = trackUiState.trackPoints.map { LatLng(it.latitude, it.longitude) }
-            PMTilesLoader.addTrackLine(
-                map,
-                "current_track",
-                points,
-                trackUiState.currentRecordingTrack!!.color
-            )
-        }
-    }
-    
-    // 모든 항적 표시 업데이트
-    private fun updateTrackDisplay(viewModel: MainViewModel) {
-        mapLibreMap?.let { map ->
-            // 기존 항적 제거
-            PMTilesLoader.removeAllTracks(map)
-            
-            // 모든 항적 표시
-            trackManager.getTracks().forEach { track ->
-                if (track.isVisible) {
-                    track.records.forEach { record ->
-                        val points = record.points.map { LatLng(it.latitude, it.longitude) }
-                        // ViewModel에서 하이라이트 정보 가져오기
-                        val trackUiState = viewModel.trackUiState
-                        val isHighlighted = trackUiState.highlightedTrackRecord != null && 
-                                           trackUiState.highlightedTrackRecord!!.first == track.id && 
-                                           trackUiState.highlightedTrackRecord!!.second == record.id
-                        PMTilesLoader.addTrackLine(
-                            map,
-                            "track_${track.id}_${record.id}",
-                            points,
-                            track.color,
-                            isHighlighted
+                    } else {
+                        val distance = calculateDistance(
+                            recordingState.lastTrackPointLocation!!.latitude,
+                            recordingState.lastTrackPointLocation!!.longitude,
+                            latitude,
+                            longitude
                         )
+                        if (distance >= track.distanceInterval) {
+                            shouldAddPoint = true
+                        }
+                    }
+                    
+                    if (shouldAddPoint) {
+                        viewModel.addTrackPointIfNeeded(latitude, longitude)
                     }
                 }
             }
-            
-            // 현재 기록 중인 항적도 표시
-            val trackUiState = viewModel.trackUiState
-            if (trackUiState.isRecordingTrack && trackUiState.currentRecordingTrack != null) {
-                updateCurrentTrackDisplay(viewModel)
-            }
         }
     }
+    
 
     // 지도 회전 제어 함수
     private fun updateMapRotation(viewModel: MainViewModel) {
@@ -621,6 +580,29 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    
+    // 위치 권한 요청 (외부에서 호출 가능)
+    fun requestLocationPermission() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            locationPermissionRequest.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        } else {
+            // 이미 권한이 있으면 위치 업데이트 시작
+            locationManager?.startLocationUpdates()
+        }
+    }
 
     @OptIn(ExperimentalFoundationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -629,7 +611,8 @@ class MainActivity : ComponentActivity() {
 
         // 헬퍼들 초기화
         pointHelper = PointHelper(this)
-        trackManager = TrackManager(this)
+        val trackLocalDataSource = com.marineplay.chartplotter.data.datasources.TrackLocalDataSource(this)
+        trackRepository = com.marineplay.chartplotter.data.repositories.TrackRepositoryImpl(trackLocalDataSource)
         val systemSettingsReader = com.marineplay.chartplotter.data.SystemSettingsReader(this)
 
         // SharedPreferences 초기화
@@ -660,7 +643,7 @@ class MainActivity : ComponentActivity() {
                 val viewModel: MainViewModel = viewModel(
                     factory = MainViewModel.provideFactory(
                         pointHelper = pointHelper,
-                        trackManager = trackManager,
+                        trackRepository = trackRepository,
                         locationManager = locationManager,
                         systemSettingsReader = systemSettingsReader
                     )
@@ -675,7 +658,6 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     activity = this@MainActivity,
                     pointHelper = pointHelper,
-                    trackManager = trackManager,
                     onMapLibreMapChange = { mapLibreMap = it },
                     onLocationManagerChange = { locationManager = it }
                 )

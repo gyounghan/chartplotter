@@ -7,13 +7,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import com.marineplay.chartplotter.SavedPoint
-import com.marineplay.chartplotter.Track
-import com.marineplay.chartplotter.TrackPoint
+import com.marineplay.chartplotter.domain.entities.Track
+import com.marineplay.chartplotter.domain.entities.TrackPoint
+import com.marineplay.chartplotter.domain.repositories.TrackRepository
 import com.marineplay.chartplotter.domain.usecases.*
 import com.marineplay.chartplotter.helpers.PointHelper
 import com.marineplay.chartplotter.LocationManager
-import com.marineplay.chartplotter.TrackManager
 import com.marineplay.chartplotter.data.SystemSettings
 import com.marineplay.chartplotter.data.SystemSettingsReader
 import org.maplibre.android.geometry.LatLng
@@ -66,17 +69,31 @@ data class GpsUiState(
 )
 
 /**
+ * 항적별 기록 상태
+ */
+data class TrackRecordingState(
+    val trackId: String,
+    val startTime: Long,
+    val points: MutableList<TrackPoint> = mutableListOf(),
+    val lastTrackPointTime: Long = 0,
+    val lastTrackPointLocation: LatLng? = null
+)
+
+/**
  * 항적 관련 UI 상태
  */
 data class TrackUiState(
-    val isRecordingTrack: Boolean = false,
-    val currentRecordingTrack: Track? = null,
-    val trackRecordingStartTime: Long = 0,
-    val trackPoints: List<TrackPoint> = emptyList(),
-    val lastTrackPointTime: Long = 0,
-    val lastTrackPointLocation: LatLng? = null,
+    val isRecordingTrack: Boolean = false, // 하위 호환성 유지
+    val currentRecordingTrack: Track? = null, // 하위 호환성 유지
+    val trackRecordingStartTime: Long = 0, // 하위 호환성 유지
+    val trackPoints: List<TrackPoint> = emptyList(), // 하위 호환성 유지
+    val lastTrackPointTime: Long = 0, // 하위 호환성 유지
+    val lastTrackPointLocation: LatLng? = null, // 하위 호환성 유지
+    // 여러 항적 동시 기록 지원
+    val recordingTracks: Map<String, TrackRecordingState> = emptyMap(), // trackId -> 상태
     val selectedTrackForRecords: Track? = null,
-    val highlightedTrackRecord: Pair<String, String>? = null // (trackId, recordId)
+    val selectedTrackForSettings: Track? = null, // 설정 다이얼로그용 선택된 항적
+    val highlightedTrackRecord: Pair<String, String>? = null // (trackId, date) - 날짜별 하이라이트
 )
 
 /**
@@ -106,7 +123,8 @@ data class DialogUiState(
     val showPowerDialog: Boolean = false,
     val showAdvancedDialog: Boolean = false,
     val showConnectionDialog: Boolean = false,
-    val showInfoDialog: Boolean = false
+    val showInfoDialog: Boolean = false,
+    val showTrackLimitDialog: Boolean = false // 항적 표시 제한 알림 다이얼로그
 )
 
 /**
@@ -128,7 +146,7 @@ class MainViewModel(
     private val addTrackPointUseCase: AddTrackPointUseCase,
     // Helper들 (UseCase에서 사용)
     private val pointHelper: PointHelper,
-    private val trackManager: TrackManager,
+    private val trackRepository: TrackRepository,
     private val systemSettingsReader: SystemSettingsReader
 ) : ViewModel() {
     
@@ -152,9 +170,64 @@ class MainViewModel(
     var systemSettings by mutableStateOf(SystemSettings())
         private set
     
+    // 항적 정보 캐시 (성능 최적화)
+    private val trackCache = mutableMapOf<String, Track>()
+    
     init {
         // 시스템 설정 로드 (SystemSetting 앱의 ContentProvider를 통해)
         loadSystemSettings()
+        
+        // 앱 시작 시 자동 기록 시작 (isRecording=true인 항적)
+        viewModelScope.launch {
+            val recordingTracks = trackRepository.getRecordingTracks()
+            if (recordingTracks.isNotEmpty()) {
+                val updatedRecordingTracks = mutableMapOf<String, TrackRecordingState>()
+                recordingTracks.forEach { track ->
+                    val recordingState = TrackRecordingState(
+                        trackId = track.id,
+                        startTime = System.currentTimeMillis() // 새로운 시작 시간
+                    )
+                    updatedRecordingTracks[track.id] = recordingState
+                    
+                    // 캐시에 저장
+                    trackCache[track.id] = track
+                    
+                    // UseCase 실행 (타이머 시작 등)
+                    startTrackRecordingUseCase.execute(track)
+                }
+                
+                trackUiState = trackUiState.copy(
+                    recordingTracks = updatedRecordingTracks,
+                    isRecordingTrack = true,
+                    currentRecordingTrack = recordingTracks.firstOrNull(),
+                    trackRecordingStartTime = recordingTracks.firstOrNull()?.let { 
+                        updatedRecordingTracks[it.id]?.startTime ?: 0L 
+                    } ?: 0L
+                )
+            }
+        }
+    }
+    
+    /**
+     * 항적 정보를 캐시에서 가져오거나 DB에서 로드하여 캐시에 저장
+     */
+    private suspend fun getTrackFromCache(trackId: String): Track? {
+        return trackCache[trackId] ?: run {
+            trackRepository.getAllTracks().find { it.id == trackId }?.also {
+                trackCache[trackId] = it
+            }
+        }
+    }
+    
+    /**
+     * 항적 캐시 무효화 (항적이 변경되었을 때 호출)
+     */
+    private fun invalidateTrackCache(trackId: String? = null) {
+        if (trackId != null) {
+            trackCache.remove(trackId)
+        } else {
+            trackCache.clear()
+        }
     }
     
     fun loadSystemSettings() {
@@ -308,6 +381,10 @@ class MainViewModel(
     
     fun updateSelectedTrackForRecords(track: Track?) {
         trackUiState = trackUiState.copy(selectedTrackForRecords = track)
+    }
+    
+    fun updateSelectedTrackForSettings(track: Track?) {
+        trackUiState = trackUiState.copy(selectedTrackForSettings = track)
     }
     
     fun updateHighlightedTrackRecord(record: Pair<String, String>?) {
@@ -804,69 +881,164 @@ class MainViewModel(
     }
     
     /**
-     * 항적 기록 시작
+     * 항적 기록 시작 (단일 항적만 기록 가능)
+     * 다른 항적이 기록 중이면 자동으로 중지하고 저장
      */
     fun startTrackRecording(track: Track) {
-        updateCurrentRecordingTrack(track)
-        updateIsRecordingTrack(true)
-        updateTrackRecordingStartTime(System.currentTimeMillis())
-        clearTrackPoints()
+        // 이미 기록 중인 항적이 있으면 자동으로 중지하고 저장
+        val currentRecordingTracks = trackUiState.recordingTracks
+        if (currentRecordingTracks.isNotEmpty()) {
+            // 기존 기록 중인 항적 모두 중지
+            currentRecordingTracks.keys.forEach { existingTrackId ->
+                stopTrackRecording(existingTrackId)
+            }
+        }
+        
+        // TrackRepository에서 항적 기록 상태 업데이트
+        viewModelScope.launch {
+            trackRepository.setTrackRecording(track.id, true)
+        }
+        
+        // 새로운 기록 상태 추가
+        val newRecordingState = TrackRecordingState(
+            trackId = track.id,
+            startTime = System.currentTimeMillis()
+        )
+        val updatedRecordingTracks = mutableMapOf<String, TrackRecordingState>()
+        updatedRecordingTracks[track.id] = newRecordingState
+        
+        trackUiState = trackUiState.copy(
+            recordingTracks = updatedRecordingTracks,
+            // 하위 호환성 유지
+            isRecordingTrack = true,
+            currentRecordingTrack = track,
+            trackRecordingStartTime = newRecordingState.startTime
+        )
+        
         startTrackRecordingUseCase.execute(track)
     }
     
     /**
-     * 항적 기록 중지
+     * 항적 기록 중지 (특정 항적)
+     * TrackPoint는 이미 실시간으로 저장되었으므로, 기록 상태만 업데이트
      */
-    fun stopTrackRecording(): com.marineplay.chartplotter.TrackRecord? {
+    fun stopTrackRecording(trackId: String? = null) {
         val currentTrackUiState = trackUiState
-        if (!currentTrackUiState.isRecordingTrack || currentTrackUiState.currentRecordingTrack == null) {
-            return null
+        val targetTrackId = trackId ?: currentTrackUiState.currentRecordingTrack?.id
+        
+        if (targetTrackId == null) {
+            return
         }
         
-        val endTime = System.currentTimeMillis()
-        val record = if (currentTrackUiState.trackPoints.isNotEmpty()) {
-            stopTrackRecordingUseCase.execute(
-                trackId = currentTrackUiState.currentRecordingTrack!!.id,
-                startTime = currentTrackUiState.trackRecordingStartTime,
-                endTime = endTime,
-                points = currentTrackUiState.trackPoints
-            )
+        val recordingState = currentTrackUiState.recordingTracks[targetTrackId] ?: return
+        
+        // TrackRepository에서 항적 기록 상태 업데이트
+        viewModelScope.launch {
+            trackRepository.setTrackRecording(targetTrackId, false)
+        }
+        
+        // 기록 상태에서 제거
+        val updatedRecordingTracks = currentTrackUiState.recordingTracks.toMutableMap()
+        updatedRecordingTracks.remove(targetTrackId)
+        
+        // 하위 호환성 유지
+        val isAnyRecording = updatedRecordingTracks.isNotEmpty()
+        val remainingTrack = if (isAnyRecording) {
+            runBlocking {
+                trackRepository.getAllTracks().find { updatedRecordingTracks.containsKey(it.id) }
+            }
         } else {
             null
         }
         
-        updateCurrentRecordingTrack(null)
-        updateIsRecordingTrack(false)
-        clearTrackPoints()
-        
-        return record
+        trackUiState = trackUiState.copy(
+            recordingTracks = updatedRecordingTracks,
+            isRecordingTrack = isAnyRecording,
+            currentRecordingTrack = remainingTrack,
+            trackRecordingStartTime = if (remainingTrack != null) {
+                updatedRecordingTracks[remainingTrack.id]?.startTime ?: 0L
+            } else {
+                0L
+            }
+        )
     }
     
     /**
-     * 항적 점 추가 (필요한 경우)
+     * 모든 항적 기록 중지
      */
-    fun addTrackPointIfNeeded(latitude: Double, longitude: Double): TrackPoint? {
+    fun stopAllTrackRecording() {
+        val recordingTrackIds = trackUiState.recordingTracks.keys.toList()
+        
+        recordingTrackIds.forEach { trackId ->
+            stopTrackRecording(trackId)
+        }
+    }
+    
+    /**
+     * 항적 점 추가 (필요한 경우) - 여러 항적 동시 기록 지원
+     * @param latitude 현재 위도
+     * @param longitude 현재 경도
+     * @param isTimerTriggered 타이머에서 호출되었는지 여부 (시간 기준 항적일 때만 사용)
+     */
+    fun addTrackPointIfNeeded(latitude: Double, longitude: Double, isTimerTriggered: Boolean = false): List<Pair<String, TrackPoint>> {
         val currentTrackUiState = trackUiState
-        if (!currentTrackUiState.isRecordingTrack || currentTrackUiState.currentRecordingTrack == null) {
-            return null
+        if (currentTrackUiState.recordingTracks.isEmpty()) {
+            return emptyList()
         }
         
         val currentTime = System.currentTimeMillis()
         updateGpsLocation(latitude, longitude, true)
         
-        val newPoint = addTrackPointUseCase.execute(
-            latitude = latitude,
-            longitude = longitude,
-            currentTime = currentTime,
-            lastTrackPointTime = currentTrackUiState.lastTrackPointTime,
-            lastTrackPointLocation = currentTrackUiState.lastTrackPointLocation
-        )
+        val addedPoints = mutableListOf<Pair<String, TrackPoint>>()
+        val updatedRecordingTracks = currentTrackUiState.recordingTracks.toMutableMap()
         
-        if (newPoint != null) {
-            addTrackPoint(newPoint)
+        // 각 기록 중인 항적에 대해 점 추가
+        currentTrackUiState.recordingTracks.forEach { (trackId, recordingState) ->
+            // 캐시에서 항적 정보 가져오기 (성능 최적화)
+            val track = runBlocking { getTrackFromCache(trackId) } ?: return@forEach
+            
+            val newPoint = addTrackPointUseCase.execute(
+                latitude = latitude,
+                longitude = longitude,
+                currentTime = currentTime,
+                lastTrackPointTime = recordingState.lastTrackPointTime,
+                lastTrackPointLocation = recordingState.lastTrackPointLocation,
+                intervalType = track.intervalType,
+                timeInterval = track.timeInterval,
+                distanceInterval = track.distanceInterval,
+                isTimerTriggered = isTimerTriggered
+            )
+            
+            if (newPoint != null) {
+                // TrackPoint를 실시간으로 DB에 저장 (앱 종료 시에도 데이터 손실 없음)
+                viewModelScope.launch {
+                    trackRepository.addTrackPoint(trackId, newPoint)
+                }
+                
+                val updatedState = recordingState.copy(
+                    points = (recordingState.points + newPoint).toMutableList(),
+                    lastTrackPointTime = currentTime,
+                    lastTrackPointLocation = LatLng(latitude, longitude)
+                )
+                updatedRecordingTracks[trackId] = updatedState
+                addedPoints.add(Pair(trackId, newPoint))
+                
+                // 하위 호환성 유지 (첫 번째 기록 중인 항적)
+                if (trackId == currentTrackUiState.currentRecordingTrack?.id) {
+                    addTrackPoint(newPoint)
+                }
+            }
         }
         
-        return newPoint
+        if (updatedRecordingTracks != currentTrackUiState.recordingTracks) {
+            trackUiState = trackUiState.copy(
+                recordingTracks = updatedRecordingTracks,
+                lastTrackPointTime = currentTime,
+                lastTrackPointLocation = LatLng(latitude, longitude)
+            )
+        }
+        
+        return addedPoints
     }
     
     /**
@@ -880,49 +1052,207 @@ class MainViewModel(
      * 항적 목록 가져오기
      */
     fun getTracks(): List<Track> {
-        return trackManager.getTracks()
+        return runBlocking {
+            trackRepository.getAllTracks()
+        }
     }
     
     /**
-     * 항적 설정 가져오기
+     * 특정 항적 가져오기 (캐시 사용, 성능 최적화)
      */
-    fun getTrackSettings(): com.marineplay.chartplotter.TrackSettings {
-        return trackManager.settings
-    }
-    
-    /**
-     * 항적 설정 저장
-     */
-    fun saveTrackSettings(settings: com.marineplay.chartplotter.TrackSettings) {
-        trackManager.saveSettings(settings)
+    fun getTrack(trackId: String): Track? {
+        return runBlocking {
+            getTrackFromCache(trackId)
+        }
     }
     
     /**
      * 항적 추가
      */
-    fun addTrack(name: String, color: Color) {
-        trackManager.addTrack(name, color)
+    fun addTrack(
+        name: String, 
+        color: Color,
+        intervalType: String = "time",
+        timeInterval: Long = 5000L,
+        distanceInterval: Double = 10.0
+    ) {
+        viewModelScope.launch {
+            val newTrack = trackRepository.addTrack(name, color, intervalType, timeInterval, distanceInterval)
+            // 새 항적을 캐시에 추가
+            trackCache[newTrack.id] = newTrack
+        }
+    }
+    
+    /**
+     * 항적 설정 업데이트
+     */
+    fun updateTrackSettings(
+        trackId: String,
+        intervalType: String? = null,
+        timeInterval: Long? = null,
+        distanceInterval: Double? = null
+    ): Boolean {
+        val result = runBlocking {
+            trackRepository.updateTrackSettings(trackId, intervalType, timeInterval, distanceInterval)
+        }
+        // 캐시 무효화 (항적 설정이 변경되었으므로)
+        if (result) {
+            invalidateTrackCache(trackId)
+        }
+        return result
+    }
+    
+    /**
+     * 항적 기록 on/off 토글
+     */
+    fun toggleTrackRecording(trackId: String) {
+        val isRecording = runBlocking { trackRepository.isTrackRecording(trackId) }
+        // 캐시에서 항적 정보 가져오기 (성능 최적화)
+        val track = runBlocking { getTrackFromCache(trackId) } ?: return
+        
+        if (isRecording) {
+            // 기록 중지
+            stopTrackRecording(trackId)
+        } else {
+            // 기록 시작
+            startTrackRecording(track)
+        }
+    }
+    
+    /**
+     * 날짜별 항적 포인트 가져오기 (모든 항적)
+     */
+    fun getPointsByDate(date: String): List<Pair<String, TrackPoint>> {
+        return runBlocking {
+            trackRepository.getPointsByDate(date)
+        }
+    }
+    
+    /**
+     * 특정 항적의 날짜별 포인트 가져오기
+     */
+    fun getTrackPointsByDate(trackId: String, date: String): List<TrackPoint> {
+        return runBlocking {
+            trackRepository.getTrackPointsByDate(trackId, date)
+        }
+    }
+    
+    /**
+     * 특정 항적의 시간 범위별 포인트 가져오기
+     */
+    fun getTrackPointsByTimeRange(trackId: String, startTime: Long, endTime: Long): List<TrackPoint> {
+        return runBlocking {
+            trackRepository.getTrackPointsByTimeRange(trackId, startTime, endTime)
+        }
+    }
+    
+    /**
+     * 특정 항적의 최근 N개 포인트 가져오기
+     */
+    fun getRecentTrackPoints(trackId: String, limit: Int = 2000): List<TrackPoint> {
+        return runBlocking {
+            trackRepository.getRecentTrackPoints(trackId, limit)
+        }
+    }
+    
+    /**
+     * 모든 날짜 목록 가져오기
+     */
+    fun getAllDates(): List<String> {
+        return runBlocking {
+            trackRepository.getAllDates()
+        }
+    }
+    
+    /**
+     * 특정 항적의 날짜 목록 가져오기
+     */
+    fun getDatesByTrackId(trackId: String): List<String> {
+        return runBlocking {
+            trackRepository.getDatesByTrackId(trackId)
+        }
+    }
+    
+    /**
+     * 특정 항적의 모든 포인트 가져오기
+     */
+    fun getTrackPoints(trackId: String): List<TrackPoint> {
+        return runBlocking {
+            trackRepository.getTrackPoints(trackId)
+        }
     }
     
     /**
      * 항적 삭제
      */
     fun deleteTrack(trackId: String) {
-        trackManager.deleteTrack(trackId)
+        viewModelScope.launch {
+            trackRepository.deleteTrack(trackId)
+            // 캐시에서 제거
+            invalidateTrackCache(trackId)
+        }
     }
     
     /**
      * 항적 표시/숨김 설정
+     * @return true: 성공, false: 제한으로 인해 실패
      */
-    fun setTrackVisibility(trackId: String, isVisible: Boolean) {
-        trackManager.setTrackVisibility(trackId, isVisible)
+    fun setTrackVisibility(trackId: String, isVisible: Boolean): Boolean {
+        // 표시를 켜려고 할 때만 제한 체크
+        if (isVisible) {
+            // 현재 표시 중인 포인트 수 계산 (최근 2000개 제한)
+            val currentVisiblePointCount = getTracks()
+                .filter { it.isVisible && it.id != trackId } // 현재 항적 제외
+                .sumOf { it.points.size.coerceAtMost(2000) }
+            
+            // 해당 항적의 포인트 수
+            val track = runBlocking { getTrackFromCache(trackId) }
+            val trackPointCount = track?.points?.size?.coerceAtMost(2000) ?: 0
+            
+            // 제한 체크 (최대 20000개 포인트만 표시 가능, 항적당 최대 2000개)
+            if (currentVisiblePointCount + trackPointCount > 20000) {
+                // 제한 알림 표시
+                dialogUiState = dialogUiState.copy(showTrackLimitDialog = true)
+                return false
+            }
+        }
+        
+        viewModelScope.launch {
+            trackRepository.setTrackVisibility(trackId, isVisible)
+            // 캐시 무효화 (항적 표시 상태가 변경되었으므로)
+            invalidateTrackCache(trackId)
+        }
+        return true
+    }
+    
+    /**
+     * 항적 표시 제한 알림 다이얼로그 표시/숨김
+     */
+    fun updateShowTrackLimitDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showTrackLimitDialog = show)
     }
     
     /**
      * 항적 기록 삭제
      */
-    fun deleteTrackRecord(trackId: String, recordId: String) {
-        trackManager.deleteTrackRecord(trackId, recordId)
+    /**
+     * 특정 항적의 날짜별 포인트 삭제
+     */
+    fun deleteTrackPointsByDate(trackId: String, date: String) {
+        viewModelScope.launch {
+            trackRepository.deleteTrackPointsByDate(trackId, date)
+            invalidateTrackCache(trackId)
+        }
+    }
+    
+    /**
+     * 특정 항적의 시간 범위별 포인트 삭제
+     */
+    fun deleteTrackPointsByTimeRange(trackId: String, startTime: Long, endTime: Long) {
+        viewModelScope.launch {
+            trackRepository.deleteTrackPointsByTimeRange(trackId, startTime, endTime)
+            invalidateTrackCache(trackId)
+        }
     }
     
     /**
@@ -1032,7 +1362,7 @@ class MainViewModel(
     companion object {
         fun provideFactory(
             pointHelper: PointHelper,
-            trackManager: TrackManager,
+            trackRepository: TrackRepository,
             locationManager: LocationManager?,
             systemSettingsReader: SystemSettingsReader
         ): ViewModelProvider.Factory {
@@ -1048,9 +1378,9 @@ class MainViewModel(
                     val updatePointUseCase = UpdatePointUseCase(pointHelper)
                     val mapRotationUseCase = MapRotationUseCase(locationManager, calculateBearingUseCase)
                     val zoomUseCase = ZoomUseCase()
-                    val startTrackRecordingUseCase = StartTrackRecordingUseCase(trackManager)
-                    val stopTrackRecordingUseCase = StopTrackRecordingUseCase(trackManager)
-                    val addTrackPointUseCase = AddTrackPointUseCase(trackManager, calculateDistanceUseCase)
+                    val startTrackRecordingUseCase = StartTrackRecordingUseCase()
+                    val stopTrackRecordingUseCase = StopTrackRecordingUseCase()
+                    val addTrackPointUseCase = AddTrackPointUseCase(calculateDistanceUseCase)
                     
                     return MainViewModel(
                         registerPointUseCase = registerPointUseCase,
@@ -1065,7 +1395,7 @@ class MainViewModel(
                         stopTrackRecordingUseCase = stopTrackRecordingUseCase,
                         addTrackPointUseCase = addTrackPointUseCase,
                         pointHelper = pointHelper,
-                        trackManager = trackManager,
+                        trackRepository = trackRepository,
                         systemSettingsReader = systemSettingsReader
                     ) as T
                 }

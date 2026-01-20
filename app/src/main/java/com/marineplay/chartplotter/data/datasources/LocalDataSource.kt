@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.graphics.Color
 import com.marineplay.chartplotter.domain.entities.Destination
 import com.marineplay.chartplotter.domain.entities.Point
+import com.marineplay.chartplotter.domain.entities.Track
+import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.helpers.PointHelper
 import org.json.JSONArray
 import org.json.JSONObject
@@ -161,7 +163,7 @@ class LocalDataSource(context: Context) {
     // Track 관련 데이터 저장/로드
     private val trackPrefs: SharedPreferences = context.getSharedPreferences("track_prefs", Context.MODE_PRIVATE)
     
-    fun saveTracks(tracks: List<com.marineplay.chartplotter.Track>) {
+    fun saveTracks(tracks: List<Track>) {
         val jsonArray = JSONArray()
         tracks.forEach { track ->
             val trackJson = JSONObject().apply {
@@ -170,75 +172,67 @@ class LocalDataSource(context: Context) {
                 put("colorValue", track.color.value.toLong())
                 put("isVisible", track.isVisible)
                 
-                val recordsArray = JSONArray()
-                track.records.forEach { record ->
-                    val recordJson = JSONObject().apply {
-                        put("id", record.id)
-                        put("startTime", record.startTime)
-                        put("endTime", record.endTime)
-                        put("title", record.title)
-                        
-                        val pointsArray = JSONArray()
-                        record.points.forEach { point ->
-                            val pointJson = JSONObject().apply {
-                                put("latitude", point.latitude)
-                                put("longitude", point.longitude)
-                                put("timestamp", point.timestamp)
-                            }
-                            pointsArray.put(pointJson)
-                        }
-                        put("points", pointsArray)
+                val pointsArray = JSONArray()
+                track.points.forEach { point ->
+                    val pointJson = JSONObject().apply {
+                        put("latitude", point.latitude)
+                        put("longitude", point.longitude)
+                        put("timestamp", point.timestamp)
                     }
-                    recordsArray.put(recordJson)
+                    pointsArray.put(pointJson)
                 }
-                put("records", recordsArray)
+                put("points", pointsArray)
             }
             jsonArray.put(trackJson)
         }
         trackPrefs.edit().putString("tracks", jsonArray.toString()).apply()
     }
     
-    fun loadTracks(): List<com.marineplay.chartplotter.Track> {
+    fun loadTracks(): List<Track> {
         val jsonString = trackPrefs.getString("tracks", null) ?: return emptyList()
-        val tracks = mutableListOf<com.marineplay.chartplotter.Track>()
+        val tracks = mutableListOf<Track>()
         
         try {
             val jsonArray = JSONArray(jsonString)
             for (i in 0 until jsonArray.length()) {
                 val trackJson = jsonArray.getJSONObject(i)
-                val track = com.marineplay.chartplotter.Track(
+                val track = Track(
                     id = trackJson.getString("id"),
                     name = trackJson.getString("name"),
                     color = androidx.compose.ui.graphics.Color(trackJson.getLong("colorValue")),
                     isVisible = trackJson.optBoolean("isVisible", true)
                 )
                 
-                val recordsArray = trackJson.getJSONArray("records")
-                for (j in 0 until recordsArray.length()) {
-                    val recordJson = recordsArray.getJSONObject(j)
-                    val pointsList = mutableListOf<com.marineplay.chartplotter.TrackPoint>()
-                    val pointsArray = recordJson.getJSONArray("points")
-                    for (k in 0 until pointsArray.length()) {
-                        val pointJson = pointsArray.getJSONObject(k)
-                        pointsList.add(
-                            com.marineplay.chartplotter.TrackPoint(
+                // 하위 호환성: records가 있으면 points로 변환
+                if (trackJson.has("records")) {
+                    val recordsArray = trackJson.getJSONArray("records")
+                    for (j in 0 until recordsArray.length()) {
+                        val recordJson = recordsArray.getJSONObject(j)
+                        val pointsArray = recordJson.getJSONArray("points")
+                        for (k in 0 until pointsArray.length()) {
+                            val pointJson = pointsArray.getJSONObject(k)
+                            track.points.add(
+                                TrackPoint(
+                                    latitude = pointJson.getDouble("latitude"),
+                                    longitude = pointJson.getDouble("longitude"),
+                                    timestamp = pointJson.getLong("timestamp")
+                                )
+                            )
+                        }
+                    }
+                } else if (trackJson.has("points")) {
+                    // 새로운 형식: points 직접 사용
+                    val pointsArray = trackJson.getJSONArray("points")
+                    for (j in 0 until pointsArray.length()) {
+                        val pointJson = pointsArray.getJSONObject(j)
+                        track.points.add(
+                            TrackPoint(
                                 latitude = pointJson.getDouble("latitude"),
                                 longitude = pointJson.getDouble("longitude"),
                                 timestamp = pointJson.getLong("timestamp")
                             )
                         )
                     }
-                    
-                    track.records.add(
-                        com.marineplay.chartplotter.TrackRecord(
-                            id = recordJson.getString("id"),
-                            trackId = track.id,
-                            startTime = recordJson.getLong("startTime"),
-                            endTime = recordJson.getLong("endTime"),
-                            points = pointsList,
-                            title = recordJson.getString("title")
-                        )
-                    )
                 }
                 
                 tracks.add(track)
@@ -250,27 +244,4 @@ class LocalDataSource(context: Context) {
         return tracks
     }
     
-    fun saveTrackSettings(settings: com.marineplay.chartplotter.TrackSettings) {
-        val json = JSONObject().apply {
-            put("intervalType", settings.intervalType)
-            put("timeInterval", settings.timeInterval)
-            put("distanceInterval", settings.distanceInterval)
-        }
-        trackPrefs.edit().putString("track_settings", json.toString()).apply()
-    }
-    
-    fun loadTrackSettings(): com.marineplay.chartplotter.TrackSettings {
-        val jsonString = trackPrefs.getString("track_settings", null) ?: return com.marineplay.chartplotter.TrackSettings("time", 5000L, 10.0)
-        
-        return try {
-            val json = JSONObject(jsonString)
-            com.marineplay.chartplotter.TrackSettings(
-                intervalType = json.getString("intervalType"),
-                timeInterval = json.getLong("timeInterval"),
-                distanceInterval = json.getDouble("distanceInterval")
-            )
-        } catch (e: Exception) {
-            com.marineplay.chartplotter.TrackSettings("time", 5000L, 10.0)
-        }
-    }
 }

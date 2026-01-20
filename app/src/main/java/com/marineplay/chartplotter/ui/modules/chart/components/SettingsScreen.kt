@@ -588,11 +588,8 @@ private fun ServiceSettingsContent(viewModel: MainViewModel) {
 @Composable
 private fun NavigationSettingsContent(viewModel: MainViewModel) {
     val systemSettings = viewModel.systemSettings
-    val trackSettings = viewModel.getTrackSettings()
-    
     var showArrivalRadiusDialog by remember { mutableStateOf(false) }
     var showXteLimitDialog by remember { mutableStateOf(false) }
-    var showRecordTypeOptions by remember { mutableStateOf(false) }
     
     val scrollState = rememberScrollState()
     
@@ -649,45 +646,7 @@ private fun NavigationSettingsContent(viewModel: MainViewModel) {
             hasSubMenu = true
         )
         
-        // 기록형태 (항적 기록 형태 설정 자동/거리/시간)
-        SettingsRow(
-            title = "기록형태",
-            value = when (trackSettings.intervalType) {
-                "auto" -> "자동"
-                "time" -> "시간"
-                "distance" -> "거리"
-                else -> "자동"
-            },
-            onClick = { showRecordTypeOptions = !showRecordTypeOptions }
-        )
-        if (showRecordTypeOptions) {
-            listOf("자동", "거리", "시간").forEach { type ->
-                Text(
-                    type,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val intervalType = when (type) {
-                                "자동" -> "auto"
-                                "거리" -> "distance"
-                                "시간" -> "time"
-                                else -> "auto"
-                            }
-                            val newSettings = trackSettings.copy(intervalType = intervalType)
-                            viewModel.saveTrackSettings(newSettings)
-                            showRecordTypeOptions = false
-                        }
-                        .padding(vertical = 8.dp, horizontal = 16.dp),
-                    color = if (when (type) {
-                        "자동" -> trackSettings.intervalType == "auto"
-                        "거리" -> trackSettings.intervalType == "distance"
-                        "시간" -> trackSettings.intervalType == "time"
-                        else -> false
-                    }) Color(0xFFFFD700) else Color.White,
-                    fontSize = 13.sp
-                )
-            }
-        }
+        // 기록형태 설정은 제거됨 (항적별 설정은 항적 목록에서 직접 수정)
     }
     
     // 도착반경 설정 다이얼로그

@@ -1,96 +1,113 @@
 package com.marineplay.chartplotter.data.repositories
 
 import androidx.compose.ui.graphics.Color
-import com.marineplay.chartplotter.Track
-import com.marineplay.chartplotter.TrackPoint
-import com.marineplay.chartplotter.TrackRecord
-import com.marineplay.chartplotter.TrackSettings
-import com.marineplay.chartplotter.data.datasources.LocalDataSource
+import com.marineplay.chartplotter.data.datasources.TrackLocalDataSource
+import com.marineplay.chartplotter.domain.entities.Track
+import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.domain.repositories.TrackRepository
-import java.util.UUID
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Track Repository 구현
+ * TrackLocalDataSource를 사용하여 데이터를 관리합니다.
+ * TrackPoint를 Track에 직접 저장 (TrackRecord 제거)
  */
 class TrackRepositoryImpl(
-    private val localDataSource: LocalDataSource
+    private val trackLocalDataSource: TrackLocalDataSource
 ) : TrackRepository {
     
-    private var tracks: MutableList<Track> = mutableListOf()
-    private var settings: TrackSettings = TrackSettings("time", 5000L, 10.0)
-    
-    init {
-        // 초기화 시 데이터 로드
-        tracks = localDataSource.loadTracks().toMutableList()
-        settings = localDataSource.loadTrackSettings()
-    }
-    
     override suspend fun getAllTracks(): List<Track> {
-        return tracks.toList()
+        return trackLocalDataSource.getTracksSuspend()
     }
     
-    override suspend fun addTrack(name: String, color: Color): Track {
-        val track = Track(
-            id = UUID.randomUUID().toString(),
-            name = name,
-            color = color
-        )
-        tracks.add(track)
-        localDataSource.saveTracks(tracks)
-        return track
+    override fun getTracksFlow(): Flow<List<Track>> {
+        return trackLocalDataSource.getTracksFlow()
+    }
+    
+    override suspend fun addTrack(
+        name: String, 
+        color: Color,
+        intervalType: String,
+        timeInterval: Long,
+        distanceInterval: Double
+    ): Track {
+        return trackLocalDataSource.addTrack(name, color, intervalType, timeInterval, distanceInterval)
     }
     
     override suspend fun deleteTrack(trackId: String): Boolean {
-        val removed = tracks.removeAll { it.id == trackId }
-        if (removed) {
-            localDataSource.saveTracks(tracks)
-        }
-        return removed
+        return trackLocalDataSource.deleteTrack(trackId)
     }
     
-    override suspend fun addTrackRecord(
-        trackId: String,
-        startTime: Long,
-        endTime: Long,
-        points: List<TrackPoint>
-    ): TrackRecord? {
-        val track = tracks.find { it.id == trackId } ?: return null
-        
-        val record = TrackRecord(
-            id = UUID.randomUUID().toString(),
-            trackId = trackId,
-            startTime = startTime,
-            endTime = endTime,
-            points = points,
-            title = TrackRecord.generateTitle(startTime, endTime)
-        )
-        
-        track.records.add(record)
-        localDataSource.saveTracks(tracks)
-        return record
+    override suspend fun addTrackPoint(trackId: String, point: TrackPoint): Boolean {
+        return trackLocalDataSource.addTrackPoint(trackId, point)
     }
     
-    override suspend fun deleteTrackRecord(trackId: String, recordId: String): Boolean {
-        val track = tracks.find { it.id == trackId } ?: return false
-        val removed = track.records.removeAll { it.id == recordId }
-        if (removed) {
-            localDataSource.saveTracks(tracks)
-        }
-        return removed
+    override suspend fun addTrackPoints(trackId: String, points: List<TrackPoint>): Boolean {
+        return trackLocalDataSource.addTrackPoints(trackId, points)
+    }
+    
+    override suspend fun getTrackPoints(trackId: String): List<TrackPoint> {
+        return trackLocalDataSource.getTrackPoints(trackId)
+    }
+    
+    override suspend fun getTrackPointsByDate(trackId: String, date: String): List<TrackPoint> {
+        return trackLocalDataSource.getTrackPointsByDate(trackId, date)
+    }
+    
+    override suspend fun getPointsByDate(date: String): List<Pair<String, TrackPoint>> {
+        return trackLocalDataSource.getPointsByDate(date)
+    }
+    
+    override suspend fun getTrackPointsByTimeRange(trackId: String, startTime: Long, endTime: Long): List<TrackPoint> {
+        return trackLocalDataSource.getTrackPointsByTimeRange(trackId, startTime, endTime)
+    }
+    
+    override suspend fun getRecentTrackPoints(trackId: String, limit: Int): List<TrackPoint> {
+        return trackLocalDataSource.getRecentTrackPoints(trackId, limit)
+    }
+    
+    override suspend fun deleteTrackPoints(trackId: String): Boolean {
+        return trackLocalDataSource.deleteTrackPoints(trackId)
+    }
+    
+    override suspend fun deleteTrackPointsByDate(trackId: String, date: String): Boolean {
+        return trackLocalDataSource.deleteTrackPointsByDate(trackId, date)
+    }
+    
+    override suspend fun deleteTrackPointsByTimeRange(trackId: String, startTime: Long, endTime: Long): Boolean {
+        return trackLocalDataSource.deleteTrackPointsByTimeRange(trackId, startTime, endTime)
     }
     
     override suspend fun setTrackVisibility(trackId: String, isVisible: Boolean) {
-        tracks.find { it.id == trackId }?.isVisible = isVisible
-        localDataSource.saveTracks(tracks)
+        trackLocalDataSource.setTrackVisibility(trackId, isVisible)
     }
     
-    override suspend fun getTrackSettings(): TrackSettings {
-        return settings
+    override suspend fun updateTrackSettings(
+        trackId: String,
+        intervalType: String?,
+        timeInterval: Long?,
+        distanceInterval: Double?
+    ): Boolean {
+        return trackLocalDataSource.updateTrackSettings(trackId, intervalType, timeInterval, distanceInterval)
     }
     
-    override suspend fun saveTrackSettings(newSettings: TrackSettings) {
-        settings = newSettings
-        localDataSource.saveTrackSettings(newSettings)
+    override suspend fun setTrackRecording(trackId: String, isRecording: Boolean): Boolean {
+        return trackLocalDataSource.setTrackRecording(trackId, isRecording)
+    }
+    
+    override suspend fun getRecordingTracks(): List<Track> {
+        return trackLocalDataSource.getRecordingTracks()
+    }
+    
+    override suspend fun isTrackRecording(trackId: String): Boolean {
+        return trackLocalDataSource.isTrackRecording(trackId)
+    }
+    
+    override suspend fun getAllDates(): List<String> {
+        return trackLocalDataSource.getAllDates()
+    }
+    
+    override suspend fun getDatesByTrackId(trackId: String): List<String> {
+        return trackLocalDataSource.getDatesByTrackId(trackId)
     }
 }
-
