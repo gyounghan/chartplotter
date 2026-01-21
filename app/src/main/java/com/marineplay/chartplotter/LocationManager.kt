@@ -152,6 +152,13 @@ class LocationManager(
     private var savedZoomLevel: Double? = null // 사용자가 설정한 줌 레벨 저장
     private var rotationVector: Sensor? =
         sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    
+    // 위치 재시도용 Handler
+    private val retryHandler = android.os.Handler(Looper.getMainLooper())
+    private var retryRunnable: Runnable? = null
+    private var retryCount = 0
+    private val MAX_RETRY_COUNT = 20 // 최대 20회 재시도 (약 2분)
+    private val RETRY_INTERVAL_MS = 6000L // 6초마다 재시도
 
     // 포인트 마커 관련
     private var pointsSource: GeoJsonSource? = null
@@ -228,8 +235,9 @@ class LocationManager(
 
         try {
             // Google Play Services FusedLocationProvider 사용
+            // 가상기기에서도 동작하도록 BALANCED_POWER_ACCURACY 사용 (GPS 실패 시 네트워크 자동 사용)
             val locationRequest = LocationRequest.Builder(
-                Priority.PRIORITY_HIGH_ACCURACY,
+                Priority.PRIORITY_BALANCED_POWER_ACCURACY, // HIGH_ACCURACY 대신 BALANCED 사용 (가상기기 호환)
                 MIN_TIME_BETWEEN_UPDATES
             ).apply {
                 setMinUpdateDistanceMeters(MIN_DISTANCE_CHANGE_FOR_UPDATES)
@@ -246,6 +254,9 @@ class LocationManager(
             
             // 즉시 마지막 알려진 위치 가져오기
             getLastKnownLocation()
+            
+            // 위치를 못 받았을 때 재시도 시작
+            startLocationRetry()
             
             Log.d("[LocationManager]", "FusedLocationProvider 위치 추적 시작")
         } catch (e: SecurityException) {
@@ -287,6 +298,9 @@ class LocationManager(
             requestLocationFromAllProviders()
             requestImmediateLocation(provider)
             
+            // 위치를 못 받았을 때 재시도 시작
+            startLocationRetry()
+            
             Log.d("[LocationManager]", "백업 위치 추적 시작 (provider=$provider)")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "백업 위치 추적 실패: ${e.message}")
@@ -323,15 +337,80 @@ class LocationManager(
             // FusedLocationProvider 중지
             fusedLocationClient.removeLocationUpdates(locationCallback)
             // 기본 LocationManager 중지 (백업용)
-            lm.removeUpdates(this) 
+            lm.removeUpdates(this)
+            // 재시도 중지
+            stopLocationRetry()
         } catch (_: Exception) {}
         Log.d("[LocationManager]", "위치 추적이 중지되었습니다.")
+    }
+    
+    /** 위치 재시도 시작 (위치를 못 받았을 때 주기적으로 재요청) */
+    private fun startLocationRetry() {
+        stopLocationRetry() // 기존 재시도 중지
+        retryCount = 0
+        
+        retryRunnable = object : Runnable {
+            override fun run() {
+                // 이미 위치를 받았으면 재시도 중지
+                if (currentLocation != null) {
+                    Log.d("[LocationManager]", "위치 획득 완료 - 재시도 중지")
+                    retryRunnable = null
+                    return
+                }
+                
+                // 최대 재시도 횟수 초과 시 중지
+                if (retryCount >= MAX_RETRY_COUNT) {
+                    Log.w("[LocationManager]", "위치 재시도 최대 횟수 도달. 위치를 받지 못했습니다.")
+                    Log.w("[LocationManager]", "가상기기 사용 시: Extended Controls(⋮) → Location에서 위치를 설정해주세요.")
+                    retryRunnable = null
+                    return
+                }
+                
+                retryCount++
+                Log.d("[LocationManager]", "위치 재시도 #$retryCount/$MAX_RETRY_COUNT")
+                
+                // 위치 재요청
+                try {
+                    if (hasLocationPermission()) {
+                        getLastKnownLocation()
+                        // 백업으로도 시도
+                        val provider = pickProvider()
+                        if (provider != null) {
+                            requestImmediateLocation(provider)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("[LocationManager]", "위치 재시도 중 오류: ${e.message}")
+                }
+                
+                // 다음 재시도 예약
+                retryHandler.postDelayed(this, RETRY_INTERVAL_MS)
+            }
+        }
+        
+        // 첫 재시도는 3초 후 시작 (초기 요청 후 잠시 대기)
+        retryHandler.postDelayed(retryRunnable!!, 3000)
+    }
+    
+    /** 위치 재시도 중지 */
+    private fun stopLocationRetry() {
+        retryRunnable?.let {
+            retryHandler.removeCallbacks(it)
+            retryRunnable = null
+        }
+        retryCount = 0
     }
 
     /** 위치 변경 콜백 */
     override fun onLocationChanged(location: Location) {
         val isFirstLocation = currentLocation == null
         currentLocation = location
+        
+        // 위치를 받았으므로 재시도 중지
+        if (isFirstLocation) {
+            stopLocationRetry()
+            Log.d("[LocationManager]", "첫 번째 위치 획득 - 재시도 중지")
+        }
         
         Log.d("[LocationManager]", "위치 업데이트: 위도 ${location.latitude}, 경도 ${location.longitude}")
         Log.d("[LocationManager]", "위치 정확도: ${location.accuracy}m, 속도: ${location.speed}m/s, 시간: ${location.time}")
