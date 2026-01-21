@@ -130,6 +130,9 @@ import android.R.attr.onClick
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.overlays.TidalCurrentOverlay
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 
 
 
@@ -172,6 +175,10 @@ class MainActivity : ComponentActivity() {
     
     // ViewModel 참조 (onKeyDown에서 사용하기 위해)
     private var mainViewModel: MainViewModel? = null
+
+    // 조류(샘플 CSV) 오버레이
+    private var tidalCurrentOverlay: TidalCurrentOverlay? = null
+    private val tidalOverlayScope = MainScope()
     
     // EntryMode 저장 (뒤로가기 처리용)
     private var currentEntryMode: EntryMode = EntryMode.CHART_ONLY
@@ -605,7 +612,18 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     activity = this@MainActivity,
                     pointHelper = pointHelper,
-                    onMapLibreMapChange = { mapLibreMap = it },
+                    onMapLibreMapChange = { map ->
+                        mapLibreMap = map
+                        // map이 잡히는 순간 1회만 오버레이 시작
+                        if (map != null && tidalCurrentOverlay == null) {
+                            tidalCurrentOverlay = TidalCurrentOverlay(
+                                context = this@MainActivity,
+                                scope = tidalOverlayScope,
+                                assetCsvPath = "current_2026-01-20_grid9_zoomranges_35.135736_129.069886_1min.csv",
+                                defaultCenter = LatLng(35.135736, 129.069886)
+                            ).also { it.start(map) }
+                        }
+                    },
                     onLocationManagerChange = { locationManager = it }
                 )
             }
@@ -913,5 +931,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         locationManager?.stopLocationUpdates()
         locationManager?.unregisterSensors()
+        tidalCurrentOverlay?.stop()
+        tidalOverlayScope.cancel()
     }
 }
