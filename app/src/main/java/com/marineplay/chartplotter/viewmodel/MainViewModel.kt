@@ -178,7 +178,11 @@ class MainViewModel(
         loadSystemSettings()
         
         // 앱 시작 시 자동 기록 시작 (isRecording=true인 항적)
+        // 지연 로드: UI가 준비된 후 백그라운드에서 처리하여 초기 로딩 시간 단축
         viewModelScope.launch {
+            // 약간의 지연을 두어 UI가 먼저 표시되도록 함
+            kotlinx.coroutines.delay(100)
+            
             val recordingTracks = trackRepository.getRecordingTracks()
             if (recordingTracks.isNotEmpty()) {
                 val updatedRecordingTracks = mutableMapOf<String, TrackRecordingState>()

@@ -133,6 +133,8 @@ import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.overlays.TidalCurrentOverlay
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 
 
 
@@ -572,9 +574,16 @@ class MainActivity : ComponentActivity() {
         // SharedPreferences 초기화
         sharedPreferences = getSharedPreferences("chart_plotter_points", Context.MODE_PRIVATE)
 
-        // 저장된 포인트들 로드
-        val savedPoints = pointHelper.loadPointsFromLocal()
-        android.util.Log.d("[MainActivity]", "저장된 포인트 ${savedPoints.size}개 로드 완료")
+        // 포인트 로드는 백그라운드에서 비동기로 처리 (UI 블로킹 방지)
+        // 저장된 포인트들 로드 - 백그라운드 스레드에서 처리
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val savedPoints = pointHelper.loadPointsFromLocal()
+                android.util.Log.d("[MainActivity]", "저장된 포인트 ${savedPoints.size}개 로드 완료 (백그라운드)")
+            } catch (e: Exception) {
+                android.util.Log.e("[MainActivity]", "포인트 로드 실패: ${e.message}", e)
+            }
+        }
 
         // MapLibre 초기화
         MapLibre.getInstance(this)

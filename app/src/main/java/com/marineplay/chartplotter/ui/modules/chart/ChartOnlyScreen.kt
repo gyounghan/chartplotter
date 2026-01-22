@@ -36,6 +36,10 @@ import com.marineplay.chartplotter.domain.mappers.PointMapper
 import com.marineplay.chartplotter.domain.usecases.UpdateNavigationRouteUseCase
 import com.marineplay.chartplotter.ui.utils.ChartPlotterHelpers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import kotlin.math.*
@@ -71,6 +75,10 @@ fun ChartOnlyScreen(
     // 지도 및 위치 관리자 상태
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
     var locationManager by remember { mutableStateOf<LocationManager?>(null) }
+    var isMapStyleLoaded by remember { mutableStateOf(false) }
+    
+    // Coroutine scope
+    val coroutineScope = rememberCoroutineScope()
     
     // UseCase 인스턴스
     val updateNavigationRouteUseCase = remember { UpdateNavigationRouteUseCase() }
@@ -1533,16 +1541,28 @@ fun ChartOnlyScreen(
                     }
 
                     // PMTiles 로드 후 선박 아이콘과 포인트 마커 추가를 위해 스타일 로드 완료를 기다림
+                    // 스타일 로드는 비동기로 처리하여 UI 블로킹 방지
                     map.getStyle { style ->
+                        isMapStyleLoaded = true
+                        
+                        // 지도 조작은 반드시 메인 스레드에서 수행 (MapLibre 요구사항)
+                        // 선박 아이콘과 포인트 레이어 추가 (메인 스레드)
                         locationManager?.addShipToMap(style)
                         locationManager?.addPointsToMap(style)
-
-                        // 저장된 포인트들을 지도에 표시
-                        val savedPoints = loadPointsFromLocal()
-                        locationManager?.updatePointsOnMap(savedPoints)
                         
-                        // 앱 시작 시 항적 표시 (항적 화면 노출이 켜져있으면 최근 기록 표시)
-                        updateTrackDisplay()
+                        // 포인트 데이터 로드만 백그라운드에서 처리
+                        coroutineScope.launch(Dispatchers.IO) {
+                            // 저장된 포인트들을 지도에 표시 (백그라운드에서 로드)
+                            val savedPoints = loadPointsFromLocal()
+                            
+                            // 메인 스레드로 전환하여 지도 업데이트
+                            withContext(Dispatchers.Main) {
+                                locationManager?.updatePointsOnMap(savedPoints)
+                                
+                                // 앱 시작 시 항적 표시 (항적 화면 노출이 켜져있으면 최근 기록 표시)
+                                updateTrackDisplay()
+                            }
+                        }
                     }
 
                     // 지도 터치/드래그 감지하여 자동 추적 중지 (수동 회전은 비활성화)
