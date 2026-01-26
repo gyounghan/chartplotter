@@ -14,8 +14,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.ui.modules.ais.AISTheme
-import com.marineplay.chartplotter.ui.modules.ais.models.AISVessel
-import com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel
+import com.marineplay.chartplotter.domain.entities.AISVessel
+import com.marineplay.chartplotter.domain.entities.RiskLevel
 
 /**
  * 위험 선박 카드

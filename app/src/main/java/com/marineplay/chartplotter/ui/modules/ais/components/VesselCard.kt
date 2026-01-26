@@ -16,8 +16,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.ui.modules.ais.AISTheme
-import com.marineplay.chartplotter.ui.modules.ais.models.AISVessel
-import com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel
+import com.marineplay.chartplotter.domain.entities.AISVessel
+import com.marineplay.chartplotter.domain.entities.RiskLevel
 
 /**
  * 선박 카드
@@ -26,6 +26,7 @@ import com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel
 fun VesselCard(
     vessel: AISVessel,
     onToggleWatchlist: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val riskBadge = getRiskBadge(vessel.riskLevel)
@@ -38,6 +39,7 @@ fun VesselCard(
                 shape = RoundedCornerShape(8.dp)
             )
             .border(1.dp, AISTheme.borderColor, RoundedCornerShape(8.dp))
+            .clickable(enabled = onClick != null, onClick = { onClick?.invoke() })
             .padding(16.dp)
     ) {
         // 헤더

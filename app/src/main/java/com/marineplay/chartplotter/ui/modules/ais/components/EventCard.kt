@@ -16,8 +16,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.ui.modules.ais.AISTheme
-import com.marineplay.chartplotter.ui.modules.ais.models.RiskEvent
-import com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel
+import com.marineplay.chartplotter.domain.entities.RiskEvent
+import com.marineplay.chartplotter.domain.entities.RiskLevel
 import java.text.SimpleDateFormat
 import java.util.*
 

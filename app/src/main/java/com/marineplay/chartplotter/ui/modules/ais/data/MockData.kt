@@ -1,6 +1,10 @@
 package com.marineplay.chartplotter.ui.modules.ais.data
 
-import com.marineplay.chartplotter.ui.modules.ais.models.*
+import com.marineplay.chartplotter.domain.entities.AISVessel
+import com.marineplay.chartplotter.domain.entities.RiskEvent
+import com.marineplay.chartplotter.domain.entities.RiskLevel
+import com.marineplay.chartplotter.domain.entities.VesselType
+import com.marineplay.chartplotter.ui.modules.ais.models.AISSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

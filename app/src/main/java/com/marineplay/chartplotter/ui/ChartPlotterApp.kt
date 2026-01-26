@@ -45,13 +45,14 @@ fun ChartPlotterApp(
     when (entryMode) {
         EntryMode.CHART_ONLY -> {
             // 차트 전용 화면
-            ChartOnlyScreen(
-                viewModel = viewModel,
-                activity = activity,
-                pointHelper = pointHelper,
-                onMapLibreMapChange = onMapLibreMapChange,
-                onLocationManagerChange = onLocationManagerChange
-            )
+            // ChartOnlyScreen(
+            //     viewModel = viewModel,
+            //     activity = activity,
+            //     pointHelper = pointHelper,
+            //     onMapLibreMapChange = onMapLibreMapChange,
+            //     onLocationManagerChange = onLocationManagerChange
+            // )
+            AISOnlyScreen()
         }
         EntryMode.BLACKBOX_ONLY -> {
             // 블랙박스 전용 화면

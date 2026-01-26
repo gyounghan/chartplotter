@@ -24,22 +24,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.ui.modules.ais.AISTheme
 import com.marineplay.chartplotter.ui.modules.ais.components.VesselCard
-import com.marineplay.chartplotter.ui.modules.ais.data.MockData
+import com.marineplay.chartplotter.ui.modules.ais.components.VesselLocationDialog
+import com.marineplay.chartplotter.ui.modules.ais.presentation.viewmodel.AISViewModel
+import com.marineplay.chartplotter.domain.entities.AISVessel
 import com.marineplay.chartplotter.ui.modules.ais.models.SortOption
 
 /**
  * 선박 목록 탭
  */
 @Composable
-fun VesselsTab() {
-    val vessels by MockData.vessels.collectAsState()
+fun VesselsTab(viewModel: AISViewModel) {
+    val vessels by viewModel.vessels.collectAsState()
+    val isConnected by viewModel.isConnected.collectAsState()
     var sortBy by remember { mutableStateOf(SortOption.DISTANCE) }
+    var sortAscending by remember { mutableStateOf(true) }
+    var selectedVessel by remember { mutableStateOf<AISVessel?>(null) }
 
-    val watchlistedVessels = vessels.filter { it.isWatchlisted }
-    val otherVessels = vessels.filter { !it.isWatchlisted }
+    val watchlistedVessels: List<AISVessel> = vessels.filter { it.isWatchlisted }
+    val otherVessels: List<AISVessel> = vessels.filter { !it.isWatchlisted }
 
-    val sortedWatchlisted = sortVessels(watchlistedVessels, sortBy)
-    val sortedOthers = sortVessels(otherVessels, sortBy)
+    val sortedWatchlisted: List<AISVessel> = sortVessels(watchlistedVessels, sortBy, sortAscending)
+    val sortedOthers: List<AISVessel> = sortVessels(otherVessels, sortBy, sortAscending)
 
     Column(
         modifier = Modifier
@@ -64,27 +69,54 @@ fun VesselsTab() {
         }
 
         // 정렬 옵션
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Column(
+            modifier = Modifier.padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SortButton(
-                label = "거리순",
-                isSelected = sortBy == SortOption.DISTANCE,
-                onClick = { sortBy = SortOption.DISTANCE }
-            )
-            SortButton(
-                label = "위험도순",
-                isSelected = sortBy == SortOption.RISK,
-                onClick = { sortBy = SortOption.RISK }
-            )
-            SortButton(
-                label = "이름순",
-                isSelected = sortBy == SortOption.NAME,
-                onClick = { sortBy = SortOption.NAME }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SortButton(
+                    label = "거리순",
+                    isSelected = sortBy == SortOption.DISTANCE,
+                    isAscending = sortAscending,
+                    onClick = { 
+                        if (sortBy == SortOption.DISTANCE) {
+                            sortAscending = !sortAscending
+                        } else {
+                            sortBy = SortOption.DISTANCE
+                            sortAscending = true
+                        }
+                    }
+                )
+                SortButton(
+                    label = "위험도순",
+                    isSelected = sortBy == SortOption.RISK,
+                    isAscending = sortAscending,
+                    onClick = { 
+                        if (sortBy == SortOption.RISK) {
+                            sortAscending = !sortAscending
+                        } else {
+                            sortBy = SortOption.RISK
+                            sortAscending = true
+                        }
+                    }
+                )
+                SortButton(
+                    label = "이름순",
+                    isSelected = sortBy == SortOption.NAME,
+                    isAscending = sortAscending,
+                    onClick = { 
+                        if (sortBy == SortOption.NAME) {
+                            sortAscending = !sortAscending
+                        } else {
+                            sortBy = SortOption.NAME
+                            sortAscending = true
+                        }
+                    }
+                )
+            }
         }
 
         // 선박 목록
@@ -112,10 +144,14 @@ fun VesselsTab() {
                         )
                     }
                 }
-                items(sortedWatchlisted) { vessel ->
+                items(
+                    items = sortedWatchlisted,
+                    key = { it.id }
+                ) { vessel ->
                     VesselCard(
                         vessel = vessel,
-                        onToggleWatchlist = { MockData.toggleWatchlist(vessel.id) }
+                        onToggleWatchlist = { viewModel.toggleWatchlist(vessel.id) },
+                        onClick = { selectedVessel = vessel }
                     )
                 }
             }
@@ -131,13 +167,28 @@ fun VesselsTab() {
                         modifier = Modifier.padding(vertical = 8.dp)
                     )
                 }
-                items(sortedOthers) { vessel ->
+                items(
+                    items = sortedOthers,
+                    key = { it.id }
+                ) { vessel ->
                     VesselCard(
                         vessel = vessel,
-                        onToggleWatchlist = { MockData.toggleWatchlist(vessel.id) }
+                        onToggleWatchlist = { viewModel.toggleWatchlist(vessel.id) },
+                        onClick = { selectedVessel = vessel }
                     )
                 }
             }
+        }
+        
+        // 선박 위치 팝업 다이얼로그
+        selectedVessel?.let { vessel ->
+            val (currentLat, currentLon) = viewModel.getCurrentLocation()
+            VesselLocationDialog(
+                vessel = vessel,
+                currentLatitude = currentLat,
+                currentLongitude = currentLon,
+                onDismiss = { selectedVessel = null }
+            )
         }
     }
 }
@@ -146,9 +197,10 @@ fun VesselsTab() {
 private fun SortButton(
     label: String,
     isSelected: Boolean,
+    isAscending: Boolean,
     onClick: () -> Unit
 ) {
-    Box(
+    Row(
         modifier = Modifier
             .background(
                 if (isSelected) AISTheme.info else AISTheme.cardBackground,
@@ -160,31 +212,59 @@ private fun SortButton(
                 RoundedCornerShape(4.dp)
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
     ) {
         Text(
             text = label,
             fontSize = 14.sp,
             color = if (isSelected) Color.White else AISTheme.textSecondary
         )
+        if (isSelected) {
+            Icon(
+                imageVector = if (isAscending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                contentDescription = if (isAscending) "오름차순" else "내림차순",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
+        }
     }
 }
 
 private fun sortVessels(
-    vessels: List<com.marineplay.chartplotter.ui.modules.ais.models.AISVessel>,
-    sortBy: SortOption
-): List<com.marineplay.chartplotter.ui.modules.ais.models.AISVessel> {
-    return when (sortBy) {
-        SortOption.DISTANCE -> vessels.sortedBy { it.distance }
+    vessels: List<AISVessel>,
+    sortBy: SortOption,
+    ascending: Boolean
+): List<AISVessel> {
+    val sorted = when (sortBy) {
+        SortOption.DISTANCE -> {
+            if (ascending) {
+                vessels.sortedBy { it.distance }
+            } else {
+                vessels.sortedByDescending { it.distance }
+            }
+        }
         SortOption.RISK -> {
             val riskOrder = mapOf(
-                com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel.CRITICAL to 0,
-                com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel.WARNING to 1,
-                com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel.SAFE to 2
+                com.marineplay.chartplotter.domain.entities.RiskLevel.CRITICAL to 0,
+                com.marineplay.chartplotter.domain.entities.RiskLevel.WARNING to 1,
+                com.marineplay.chartplotter.domain.entities.RiskLevel.SAFE to 2
             )
-            vessels.sortedBy { riskOrder[it.riskLevel] ?: 2 }
+            if (ascending) {
+                vessels.sortedBy { riskOrder[it.riskLevel] ?: 2 }
+            } else {
+                vessels.sortedByDescending { riskOrder[it.riskLevel] ?: 2 }
+            }
         }
-        SortOption.NAME -> vessels.sortedBy { it.name }
+        SortOption.NAME -> {
+            if (ascending) {
+                vessels.sortedBy { it.name }
+            } else {
+                vessels.sortedByDescending { it.name }
+            }
+        }
     }
+    return sorted
 }
 

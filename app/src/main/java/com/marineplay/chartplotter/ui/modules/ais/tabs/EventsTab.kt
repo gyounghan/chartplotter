@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.ui.modules.ais.AISTheme
 import com.marineplay.chartplotter.ui.modules.ais.components.EventCard
-import com.marineplay.chartplotter.ui.modules.ais.data.MockData
+import com.marineplay.chartplotter.ui.modules.ais.presentation.viewmodel.AISViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -29,11 +29,11 @@ import java.util.*
  * 이벤트 기록 탭
  */
 @Composable
-fun EventsTab() {
-    val events by MockData.events.collectAsState()
+fun EventsTab(viewModel: AISViewModel) {
+    val events by viewModel.events.collectAsState()
     
-    val criticalEvents = events.filter { it.riskLevel == com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel.CRITICAL }
-    val warningEvents = events.filter { it.riskLevel == com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel.WARNING }
+    val criticalEvents = events.filter { it.riskLevel == com.marineplay.chartplotter.domain.entities.RiskLevel.CRITICAL }
+    val warningEvents = events.filter { it.riskLevel == com.marineplay.chartplotter.domain.entities.RiskLevel.WARNING }
 
     Column(
         modifier = Modifier

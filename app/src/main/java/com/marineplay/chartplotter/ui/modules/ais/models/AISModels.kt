@@ -1,27 +1,10 @@
 package com.marineplay.chartplotter.ui.modules.ais.models
 
-import androidx.compose.ui.graphics.Color
-
 /**
- * AIS 선박 타입
+ * AIS UI 모델
+ * Presentation 레이어에서만 사용되는 UI 관련 모델
+ * Domain Entity와는 분리되어 있음
  */
-enum class VesselType(val label: String, val emoji: String) {
-    CARGO("화물선", "📦"),
-    TANKER("유조선", "⛽"),
-    PASSENGER("여객선", "🚢"),
-    FISHING("어선", "🎣"),
-    PLEASURE("요트", "⛵"),
-    OTHER("기타", "🚤")
-}
-
-/**
- * 위험 수준
- */
-enum class RiskLevel(val label: String) {
-    CRITICAL("즉시 위험"),
-    WARNING("주의"),
-    SAFE("정상")
-}
 
 /**
  * AIS 탭
@@ -43,40 +26,7 @@ enum class SortOption(val label: String) {
 }
 
 /**
- * AIS 선박 정보
- */
-data class AISVessel(
-    val id: String,
-    val name: String,
-    val mmsi: String,
-    val type: VesselType,
-    val distance: Double, // 해리 단위
-    val bearing: Int, // 도 단위
-    val speed: Double, // 노트 단위
-    val course: Int, // 도 단위
-    val cpa: Double, // 최근접점 거리 (해리)
-    val tcpa: Int, // 최근접점 도달 시간 (분)
-    val riskLevel: RiskLevel,
-    val isWatchlisted: Boolean,
-    val lastUpdate: Long // 타임스탬프
-)
-
-/**
- * 위험 이벤트
- */
-data class RiskEvent(
-    val id: String,
-    val timestamp: Long,
-    val vesselId: String,
-    val vesselName: String,
-    val cpa: Double,
-    val tcpa: Int,
-    val riskLevel: RiskLevel,
-    val description: String
-)
-
-/**
- * AIS 설정
+ * AIS 설정 (UI 설정)
  */
 data class AISSettings(
     val cpaWarningThreshold: Double = 2.0, // 해리
@@ -92,4 +42,3 @@ data class AISSettings(
     val showOtherVessels: Boolean = true,
     val watchlistAlerts: Boolean = true
 )
-

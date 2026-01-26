@@ -2,6 +2,7 @@ package com.marineplay.chartplotter.ui.modules.ais.tabs
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -20,19 +24,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.ui.modules.ais.AISTheme
 import com.marineplay.chartplotter.ui.modules.ais.components.VesselRiskCard
-import com.marineplay.chartplotter.ui.modules.ais.data.MockData
-import com.marineplay.chartplotter.ui.modules.ais.models.RiskLevel
+import com.marineplay.chartplotter.domain.entities.RiskLevel
+import com.marineplay.chartplotter.ui.modules.ais.presentation.viewmodel.AISViewModel
 
 /**
  * 위험 분석 탭
  */
 @Composable
-fun RiskTab() {
-    val vessels by MockData.vessels.collectAsState()
+fun RiskTab(viewModel: AISViewModel) {
+    val vessels by viewModel.vessels.collectAsState()
+    var selectedFilter by remember { mutableStateOf<RiskLevel?>(null) }
     
     val criticalVessels = vessels.filter { it.riskLevel == RiskLevel.CRITICAL }
     val warningVessels = vessels.filter { it.riskLevel == RiskLevel.WARNING }
-    val safeCount = vessels.count { it.riskLevel == RiskLevel.SAFE }
+    val safeVessels = vessels.filter { it.riskLevel == RiskLevel.SAFE }
+    val safeCount = safeVessels.size
+    
+    // 필터링된 선박 목록
+    val filteredVessels = when (selectedFilter) {
+        RiskLevel.CRITICAL -> criticalVessels
+        RiskLevel.WARNING -> warningVessels
+        RiskLevel.SAFE -> safeVessels
+        null -> emptyList() // 필터가 없으면 모든 항목 표시하지 않음
+    }
 
     Column(
         modifier = Modifier
@@ -68,21 +82,36 @@ fun RiskTab() {
                 count = criticalVessels.size,
                 color = AISTheme.danger,
                 backgroundColor = AISTheme.dangerBackground,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { 
+                        selectedFilter = if (selectedFilter == RiskLevel.CRITICAL) null else RiskLevel.CRITICAL
+                    },
+                isSelected = selectedFilter == RiskLevel.CRITICAL
             )
             RiskSummaryCard(
                 label = "주의 필요",
                 count = warningVessels.size,
                 color = AISTheme.warning,
                 backgroundColor = AISTheme.warningBackground,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { 
+                        selectedFilter = if (selectedFilter == RiskLevel.WARNING) null else RiskLevel.WARNING
+                    },
+                isSelected = selectedFilter == RiskLevel.WARNING
             )
             RiskSummaryCard(
                 label = "정상",
                 count = safeCount,
                 color = AISTheme.safe,
                 backgroundColor = AISTheme.safeBackground,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { 
+                        selectedFilter = if (selectedFilter == RiskLevel.SAFE) null else RiskLevel.SAFE
+                    },
+                isSelected = selectedFilter == RiskLevel.SAFE
             )
         }
 
@@ -90,36 +119,83 @@ fun RiskTab() {
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (criticalVessels.isNotEmpty()) {
-                item {
-                    SectionHeader(
-                        title = "즉시 위험",
-                        icon = Icons.Default.Warning,
-                        color = AISTheme.danger
-                    )
+            if (selectedFilter != null) {
+                // 필터가 선택된 경우 해당 항목만 표시
+                if (filteredVessels.isNotEmpty()) {
+                    item {
+                        val title = when (selectedFilter) {
+                            RiskLevel.CRITICAL -> "즉시 위험"
+                            RiskLevel.WARNING -> "주의 필요"
+                            RiskLevel.SAFE -> "정상"
+                            null -> ""
+                        }
+                        val color = when (selectedFilter) {
+                            RiskLevel.CRITICAL -> AISTheme.danger
+                            RiskLevel.WARNING -> AISTheme.warning
+                            RiskLevel.SAFE -> AISTheme.safe
+                            null -> AISTheme.textPrimary
+                        }
+                        SectionHeader(
+                            title = title,
+                            icon = Icons.Default.Warning,
+                            color = color
+                        )
+                    }
+                    items(filteredVessels) { vessel ->
+                        VesselRiskCard(vessel = vessel)
+                    }
+                } else {
+                    item {
+                        EmptyState()
+                    }
                 }
-                items(criticalVessels) { vessel ->
-                    VesselRiskCard(vessel = vessel)
+            } else {
+                // 필터가 없는 경우 모든 항목 표시
+                if (criticalVessels.isNotEmpty()) {
+                    item {
+                        SectionHeader(
+                            title = "즉시 위험",
+                            icon = Icons.Default.Warning,
+                            color = AISTheme.danger
+                        )
+                    }
+                    items(criticalVessels) { vessel ->
+                        VesselRiskCard(vessel = vessel)
+                    }
                 }
-            }
 
-            if (warningVessels.isNotEmpty()) {
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    SectionHeader(
-                        title = "주의 필요",
-                        icon = Icons.Default.Warning,
-                        color = AISTheme.warning
-                    )
+                if (warningVessels.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SectionHeader(
+                            title = "주의 필요",
+                            icon = Icons.Default.Warning,
+                            color = AISTheme.warning
+                        )
+                    }
+                    items(warningVessels) { vessel ->
+                        VesselRiskCard(vessel = vessel)
+                    }
                 }
-                items(warningVessels) { vessel ->
-                    VesselRiskCard(vessel = vessel)
-                }
-            }
 
-            if (criticalVessels.isEmpty() && warningVessels.isEmpty()) {
-                item {
-                    EmptyState()
+                if (safeVessels.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SectionHeader(
+                            title = "정상",
+                            icon = Icons.Default.CheckCircle,
+                            color = AISTheme.safe
+                        )
+                    }
+                    items(safeVessels) { vessel ->
+                        VesselRiskCard(vessel = vessel)
+                    }
+                }
+
+                if (criticalVessels.isEmpty() && warningVessels.isEmpty() && safeVessels.isEmpty()) {
+                    item {
+                        EmptyState()
+                    }
                 }
             }
         }
@@ -132,15 +208,20 @@ private fun RiskSummaryCard(
     count: Int,
     color: Color,
     backgroundColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isSelected: Boolean = false
 ) {
     Column(
         modifier = modifier
             .background(
-                backgroundColor,
+                if (isSelected) color.copy(alpha = 0.3f) else backgroundColor,
                 shape = RoundedCornerShape(8.dp)
             )
-            .border(1.dp, color, RoundedCornerShape(8.dp))
+            .border(
+                if (isSelected) 2.dp else 1.dp,
+                color,
+                RoundedCornerShape(8.dp)
+            )
             .padding(16.dp)
     ) {
         Text(
