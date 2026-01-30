@@ -11,11 +11,12 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import com.marineplay.chartplotter.SavedPoint
+import com.marineplay.chartplotter.data.models.SavedPoint as DataSavedPoint
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.domain.repositories.TrackRepository
+import com.marineplay.chartplotter.domain.repositories.PointRepository
 import com.marineplay.chartplotter.domain.usecases.*
-import com.marineplay.chartplotter.helpers.PointHelper
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.data.SystemSettings
 import com.marineplay.chartplotter.data.SystemSettingsReader
@@ -144,8 +145,8 @@ class MainViewModel(
     private val startTrackRecordingUseCase: StartTrackRecordingUseCase,
     private val stopTrackRecordingUseCase: StopTrackRecordingUseCase,
     private val addTrackPointUseCase: AddTrackPointUseCase,
-    // Helper들 (UseCase에서 사용)
-    private val pointHelper: PointHelper,
+    // Repository
+    private val pointRepository: PointRepository,
     private val trackRepository: TrackRepository,
     private val systemSettingsReader: SystemSettingsReader
 ) : ViewModel() {
@@ -792,33 +793,44 @@ class MainViewModel(
         name: String,
         color: Color,
         iconType: String
-    ): List<com.marineplay.chartplotter.helpers.PointHelper.SavedPoint> {
-        return registerPointUseCase.execute(latLng, name, color, iconType)
+    ) {
+        viewModelScope.launch {
+            val savedPoints = registerPointUseCase.execute(latLng, name, color, iconType)
+            pointUiState = pointUiState.copy(pointCount = savedPoints.size)
+        }
     }
     
     /**
      * 포인트 삭제
      */
-    fun deletePoint(point: com.marineplay.chartplotter.helpers.PointHelper.SavedPoint): List<com.marineplay.chartplotter.helpers.PointHelper.SavedPoint> {
-        return deletePointUseCase.execute(point)
+    fun deletePoint(point: DataSavedPoint) {
+        viewModelScope.launch {
+            val savedPoints = deletePointUseCase.execute(point)
+            pointUiState = pointUiState.copy(pointCount = savedPoints.size)
+        }
     }
     
     /**
      * 포인트 업데이트
      */
     fun updatePoint(
-        originalPoint: com.marineplay.chartplotter.helpers.PointHelper.SavedPoint,
+        originalPoint: DataSavedPoint,
         newName: String,
         newColor: Color
-    ): List<com.marineplay.chartplotter.helpers.PointHelper.SavedPoint> {
-        return updatePointUseCase.execute(originalPoint, newName, newColor)
+    ) {
+        viewModelScope.launch {
+            val savedPoints = updatePointUseCase.execute(originalPoint, newName, newColor)
+            pointUiState = pointUiState.copy(pointCount = savedPoints.size)
+        }
     }
     
     /**
      * 다음 사용 가능한 포인트 번호 가져오기
      */
     fun getNextAvailablePointNumber(): Int {
-        return getNextAvailablePointNumberUseCase.execute()
+        return runBlocking {
+            getNextAvailablePointNumberUseCase.execute()
+        }
     }
     
     /**
@@ -1048,8 +1060,10 @@ class MainViewModel(
     /**
      * 포인트 목록 로드
      */
-    fun loadPointsFromLocal(): List<com.marineplay.chartplotter.helpers.PointHelper.SavedPoint> {
-        return pointHelper.loadPointsFromLocal()
+    fun loadPointsFromLocal(): List<DataSavedPoint> {
+        return runBlocking {
+            pointRepository.getAllSavedPoints()
+        }
     }
     
     /**
@@ -1322,7 +1336,7 @@ class MainViewModel(
      */
     fun handleCursorPointSelection(
         map: MapLibreMap?,
-        savedPoints: List<com.marineplay.chartplotter.helpers.PointHelper.SavedPoint>,
+        savedPoints: List<DataSavedPoint>,
         calculateScreenDistance: (LatLng, LatLng, MapLibreMap) -> Double
     ) {
         if (!mapUiState.showCursor || mapUiState.cursorLatLng == null || mapUiState.cursorScreenPosition == null) {
@@ -1342,18 +1356,18 @@ class MainViewModel(
                 
                 if (screenDistance <= 40) {
                     // 포인트 편집/삭제 다이얼로그 표시
-                    // PointHelper.SavedPoint를 com.marineplay.chartplotter.SavedPoint로 변환
+                    // DataSavedPoint를 com.marineplay.chartplotter.SavedPoint로 변환
                     val savedPoint = SavedPoint(
                         name = closestPoint.name,
                         latitude = closestPoint.latitude,
                         longitude = closestPoint.longitude,
-                        color = Color(closestPoint.color.toArgb()),
+                        color = Color(closestPoint.color),
                         iconType = closestPoint.iconType,
                         timestamp = closestPoint.timestamp
                     )
                     updateSelectedPoint(savedPoint)
                     updateEditPointName(closestPoint.name)
-                    updateEditSelectedColor(Color(closestPoint.color.toArgb()))
+                    updateEditSelectedColor(Color(closestPoint.color))
                     updateShowEditDialog(true)
                 }
             }
@@ -1365,7 +1379,7 @@ class MainViewModel(
      */
     companion object {
         fun provideFactory(
-            pointHelper: PointHelper,
+            pointRepository: PointRepository,
             trackRepository: TrackRepository,
             locationManager: LocationManager?,
             systemSettingsReader: SystemSettingsReader
@@ -1376,10 +1390,10 @@ class MainViewModel(
                     // UseCase 생성
                     val calculateBearingUseCase = CalculateBearingUseCase()
                     val calculateDistanceUseCase = CalculateDistanceUseCase()
-                    val getNextAvailablePointNumberUseCase = GetNextAvailablePointNumberUseCase(pointHelper)
-                    val registerPointUseCase = RegisterPointUseCase(pointHelper)
-                    val deletePointUseCase = DeletePointUseCase(pointHelper)
-                    val updatePointUseCase = UpdatePointUseCase(pointHelper)
+                    val getNextAvailablePointNumberUseCase = GetNextAvailablePointNumberUseCase(pointRepository)
+                    val registerPointUseCase = RegisterPointUseCase(pointRepository, getNextAvailablePointNumberUseCase)
+                    val deletePointUseCase = DeletePointUseCase(pointRepository)
+                    val updatePointUseCase = UpdatePointUseCase(pointRepository)
                     val mapRotationUseCase = MapRotationUseCase(locationManager, calculateBearingUseCase)
                     val zoomUseCase = ZoomUseCase()
                     val startTrackRecordingUseCase = StartTrackRecordingUseCase()
@@ -1398,7 +1412,7 @@ class MainViewModel(
                         startTrackRecordingUseCase = startTrackRecordingUseCase,
                         stopTrackRecordingUseCase = stopTrackRecordingUseCase,
                         addTrackPointUseCase = addTrackPointUseCase,
-                        pointHelper = pointHelper,
+                        pointRepository = pointRepository,
                         trackRepository = trackRepository,
                         systemSettingsReader = systemSettingsReader
                     ) as T

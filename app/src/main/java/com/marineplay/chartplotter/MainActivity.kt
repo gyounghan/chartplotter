@@ -103,18 +103,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.marineplay.chartplotter.ui.theme.ChartPlotterTheme
+import com.marineplay.chartplotter.presentation.theme.ChartPlotterTheme
 import com.marineplay.chartplotter.utils.DistanceCalculator
-import com.marineplay.chartplotter.helpers.PointHelper
-import com.marineplay.chartplotter.helpers.DestinationHelper
-import com.marineplay.chartplotter.ui.components.PointDialog
-import com.marineplay.chartplotter.ui.components.DestinationDialog
-import com.marineplay.chartplotter.ui.components.MenuPanel
-import com.marineplay.chartplotter.ui.components.map.ChartPlotterMap
-import com.marineplay.chartplotter.ui.components.dialogs.PointRegistrationDialog
-import com.marineplay.chartplotter.ui.components.dialogs.PointManageDialog
-import com.marineplay.chartplotter.ui.components.dialogs.PointEditDialog
-import com.marineplay.chartplotter.ui.components.dialogs.PointDeleteListDialog
+import com.marineplay.chartplotter.data.datasources.LocalDataSource
+import com.marineplay.chartplotter.data.repositories.PointRepositoryImpl
+import com.marineplay.chartplotter.domain.repositories.PointRepository
+import com.marineplay.chartplotter.presentation.components.PointDialog
+import com.marineplay.chartplotter.presentation.components.DestinationDialog
+import com.marineplay.chartplotter.presentation.components.MenuPanel
+import com.marineplay.chartplotter.presentation.components.map.ChartPlotterMap
+import com.marineplay.chartplotter.presentation.components.dialogs.PointRegistrationDialog
+import com.marineplay.chartplotter.presentation.components.dialogs.PointManageDialog
+import com.marineplay.chartplotter.presentation.components.dialogs.PointEditDialog
+import com.marineplay.chartplotter.presentation.components.dialogs.PointDeleteListDialog
 import org.maplibre.android.MapLibre
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -130,7 +131,7 @@ import android.R.attr.onClick
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
-import com.marineplay.chartplotter.overlays.TidalCurrentOverlay
+import com.marineplay.chartplotter.presentation.modules.chart.overlays.TidalCurrentOverlay
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -163,8 +164,7 @@ class MainActivity : ComponentActivity() {
     private var mapLibreMap: MapLibreMap? = null
 
     // 헬퍼들
-    private lateinit var pointHelper: PointHelper
-    private lateinit var destinationHelper: DestinationHelper
+    private lateinit var pointRepository: PointRepository
     private lateinit var trackRepository: com.marineplay.chartplotter.domain.repositories.TrackRepository
     private lateinit var sharedPreferences: SharedPreferences
 
@@ -565,8 +565,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 헬퍼들 초기화
-        pointHelper = PointHelper(this)
+        // Repository 초기화
+        val localDataSource = LocalDataSource(this)
+        pointRepository = PointRepositoryImpl(localDataSource, null)
         val trackLocalDataSource = com.marineplay.chartplotter.data.datasources.TrackLocalDataSource(this)
         trackRepository = com.marineplay.chartplotter.data.repositories.TrackRepositoryImpl(trackLocalDataSource)
         val systemSettingsReader = com.marineplay.chartplotter.data.SystemSettingsReader(this)
@@ -578,7 +579,7 @@ class MainActivity : ComponentActivity() {
         // 저장된 포인트들 로드 - 백그라운드 스레드에서 처리
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             try {
-                val savedPoints = pointHelper.loadPointsFromLocal()
+                val savedPoints = pointRepository.getAllSavedPoints()
                 android.util.Log.d("[MainActivity]", "저장된 포인트 ${savedPoints.size}개 로드 완료 (백그라운드)")
             } catch (e: Exception) {
                 android.util.Log.e("[MainActivity]", "포인트 로드 실패: ${e.message}", e)
@@ -605,7 +606,7 @@ class MainActivity : ComponentActivity() {
                 // ViewModel 생성 (Factory 사용)
                 val viewModel: MainViewModel = viewModel(
                     factory = MainViewModel.provideFactory(
-                        pointHelper = pointHelper,
+                        pointRepository = pointRepository,
                         trackRepository = trackRepository,
                         locationManager = locationManager,
                         systemSettingsReader = systemSettingsReader
@@ -616,11 +617,10 @@ class MainActivity : ComponentActivity() {
                 mainViewModel = viewModel
                 
                 // ChartPlotterApp 호출 (EntryMode에 따라 화면 구성)
-                com.marineplay.chartplotter.ui.ChartPlotterApp(
+                com.marineplay.chartplotter.presentation.ChartPlotterApp(
                     entryMode = currentEntryMode,
                     viewModel = viewModel,
                     activity = this@MainActivity,
-                    pointHelper = pointHelper,
                     onMapLibreMapChange = { map ->
                         mapLibreMap = map
                         // map이 잡히는 순간 1회만 오버레이 시작
@@ -716,7 +716,7 @@ class MainActivity : ComponentActivity() {
             }
             KeyEvent.KEYCODE_BUTTON_5 -> {
                 // 커서 클릭 이벤트 (목적지/포인트 클릭 처리)
-                val savedPoints = pointHelper.loadPointsFromLocal()
+                val savedPoints = pointRepository.getAllSavedPoints()
                 viewModel.handleCursorPointSelection(
                     mapLibreMap,
                     savedPoints,
@@ -794,46 +794,37 @@ class MainActivity : ComponentActivity() {
     
     private fun savePointToLocal(point: SavedPoint) {
         try {
-            val existingPoints = loadPointsFromLocal().toMutableList()
-            existingPoints.add(point)
-            
-            val jsonArray = JSONArray()
-            existingPoints.forEach { p ->
-                val jsonObject = JSONObject().apply {
-                    put("name", p.name)
-                    put("latitude", p.latitude)
-                    put("longitude", p.longitude)
-                    put("color", AndroidColor.argb(
-                        (p.color.alpha * 255).toInt(),
-                        (p.color.red * 255).toInt(),
-                        (p.color.green * 255).toInt(),
-                        (p.color.blue * 255).toInt()
-                    ))
-                    put("iconType", p.iconType)
-                    put("timestamp", p.timestamp)
-                }
-                jsonArray.put(jsonObject)
-            }
-            
-            sharedPreferences.edit()
-                .putString("saved_points", jsonArray.toString())
-                .apply()
-                
-            android.util.Log.d("[MainActivity]", "포인트 저장 완료: ${existingPoints.size}개")
+            val colorInt = AndroidColor.argb(
+                (point.color.alpha * 255).toInt(),
+                (point.color.red * 255).toInt(),
+                (point.color.green * 255).toInt(),
+                (point.color.blue * 255).toInt()
+            )
+            val dataPoint = com.marineplay.chartplotter.data.models.SavedPoint(
+                name = point.name,
+                latitude = point.latitude,
+                longitude = point.longitude,
+                color = colorInt, // android.graphics.Color는 Int 타입
+                iconType = point.iconType,
+                timestamp = point.timestamp
+            )
+            pointRepository.addSavedPoint(dataPoint)
+            android.util.Log.d("[MainActivity]", "포인트 저장 완료")
         } catch (e: Exception) {
             android.util.Log.e("[MainActivity]", "포인트 저장 실패: ${e.message}")
         }
     }
     
     private fun loadPointsFromLocal(): List<SavedPoint> {
-        return pointHelper.loadPointsFromLocal().map { pointHelperPoint ->
+        val savedPoints = pointRepository.getAllSavedPoints()
+        return savedPoints.map { savedPoint ->
             SavedPoint(
-                name = pointHelperPoint.name,
-                latitude = pointHelperPoint.latitude,
-                longitude = pointHelperPoint.longitude,
-                color = Color(pointHelperPoint.color.toArgb()),
-                iconType = pointHelperPoint.iconType,
-                timestamp = pointHelperPoint.timestamp
+                name = savedPoint.name,
+                latitude = savedPoint.latitude,
+                longitude = savedPoint.longitude,
+                color = Color(savedPoint.color),
+                iconType = savedPoint.iconType,
+                timestamp = savedPoint.timestamp
             )
         }
     }

@@ -3,13 +3,14 @@ package com.marineplay.chartplotter.domain.usecases
 import androidx.compose.ui.graphics.toArgb
 import android.graphics.Color as AndroidColor
 import androidx.compose.ui.graphics.Color as ComposeColor
-import com.marineplay.chartplotter.helpers.PointHelper
+import com.marineplay.chartplotter.data.models.SavedPoint
+import com.marineplay.chartplotter.domain.repositories.PointRepository
 
 /**
  * 포인트 업데이트 UseCase
  */
 class UpdatePointUseCase(
-    private val pointHelper: PointHelper
+    private val pointRepository: PointRepository
 ) {
     /**
      * 포인트를 업데이트합니다.
@@ -19,25 +20,13 @@ class UpdatePointUseCase(
      * @return 업데이트 후 포인트 목록
      */
     fun execute(
-        originalPoint: PointHelper.SavedPoint,
+        originalPoint: SavedPoint,
         newName: String,
         newColor: ComposeColor
-    ): List<PointHelper.SavedPoint> {
-        val existingPoints = pointHelper.loadPointsFromLocal().toMutableList()
-        val pointIndex = existingPoints.indexOfFirst { it.timestamp == originalPoint.timestamp }
-        
-        if (pointIndex != -1) {
-            // Compose Color를 Android Color로 변환
-            val androidColor = AndroidColor.valueOf(newColor.toArgb())
-            val updatedPoint = originalPoint.copy(
-                name = newName,
-                color = androidColor
-            )
-            existingPoints[pointIndex] = updatedPoint
-            pointHelper.savePointsToLocal(existingPoints)
-        }
-        
-        return existingPoints
+    ): List<SavedPoint> {
+        // Compose Color를 Int로 변환
+        val colorInt = newColor.toArgb()
+        return pointRepository.updateSavedPoint(originalPoint, newName, colorInt)
     }
 }
 

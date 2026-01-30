@@ -39,8 +39,10 @@ data class AISVessel(
     val riskLevel: RiskLevel,
     val isWatchlisted: Boolean,
     val lastUpdate: Long, // 타임스탬프
-    val latitude: Double? = null, // 위도
-    val longitude: Double? = null // 경도
+    val latitude: Double? = null, // 위도 (raw)
+    val longitude: Double? = null, // 경도 (raw)
+    val displayLatitude: Double? = null, // 표시용 위도 (smoothing 적용)
+    val displayLongitude: Double? = null // 표시용 경도 (smoothing 적용)
 )
 
 /**

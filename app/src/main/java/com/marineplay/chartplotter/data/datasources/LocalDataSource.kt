@@ -7,7 +7,7 @@ import com.marineplay.chartplotter.domain.entities.Destination
 import com.marineplay.chartplotter.domain.entities.Point
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
-import com.marineplay.chartplotter.helpers.PointHelper
+import com.marineplay.chartplotter.data.models.SavedPoint
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -120,15 +120,15 @@ class LocalDataSource(context: Context) {
         } else null
     }
     
-    // PointHelper.SavedPoint 지원 (기존 PointHelper와 호환)
-    fun saveSavedPoints(points: List<PointHelper.SavedPoint>) {
+    // SavedPoint 지원 (기존 PointHelper와 호환)
+    fun saveSavedPoints(points: List<SavedPoint>) {
         val jsonArray = JSONArray()
         points.forEach { point ->
             val jsonObject = JSONObject().apply {
                 put("name", point.name)
                 put("latitude", point.latitude)
                 put("longitude", point.longitude)
-                put("color", point.color.toArgb())
+                put("color", point.color) // color는 이미 Int 타입
                 put("iconType", point.iconType)
                 put("timestamp", point.timestamp)
             }
@@ -137,18 +137,18 @@ class LocalDataSource(context: Context) {
         pointPrefs.edit().putString("saved_points", jsonArray.toString()).apply()
     }
     
-    fun loadSavedPoints(): List<PointHelper.SavedPoint> {
+    fun loadSavedPoints(): List<SavedPoint> {
         val jsonString = pointPrefs.getString("saved_points", null) ?: return emptyList()
         return try {
             val jsonArray = JSONArray(jsonString)
-            val points = mutableListOf<PointHelper.SavedPoint>()
+            val points = mutableListOf<SavedPoint>()
             for (i in 0 until jsonArray.length()) {
                 val jsonObject = jsonArray.getJSONObject(i)
-                val point = PointHelper.SavedPoint(
+                val point = SavedPoint(
                     name = jsonObject.getString("name"),
                     latitude = jsonObject.getDouble("latitude"),
                     longitude = jsonObject.getDouble("longitude"),
-                    color = Color.valueOf(jsonObject.getInt("color")),
+                    color = jsonObject.getInt("color"), // Int 타입으로 직접 사용
                     iconType = jsonObject.optString("iconType", "circle"),
                     timestamp = jsonObject.optLong("timestamp", System.currentTimeMillis())
                 )

@@ -1,20 +1,20 @@
 package com.marineplay.chartplotter.domain.usecases
 
-import com.marineplay.chartplotter.helpers.PointHelper
+import com.marineplay.chartplotter.domain.repositories.PointRepository
 
 /**
  * 다음 사용 가능한 포인트 번호 가져오기 UseCase
  */
 class GetNextAvailablePointNumberUseCase(
-    private val pointHelper: PointHelper
+    private val pointRepository: PointRepository
 ) {
     /**
      * 다음 사용 가능한 포인트 번호를 반환합니다.
      * "Point123" 형태의 이름에서 숫자 부분을 추출하여 사용되지 않은 최소 번호를 찾습니다.
      * @return 다음 사용 가능한 포인트 번호
      */
-    fun execute(): Int {
-        val existingPoints = pointHelper.loadPointsFromLocal()
+    suspend fun execute(): Int {
+        val existingPoints = pointRepository.getAllSavedPoints()
         val usedNumbers = existingPoints.mapNotNull { point ->
             // "Point123" 형태에서 숫자 부분만 추출
             val matchResult = Regex("Point(\\d+)").find(point.name)

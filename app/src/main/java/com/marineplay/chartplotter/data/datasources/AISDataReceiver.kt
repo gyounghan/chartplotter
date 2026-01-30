@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.util.regex.Pattern
 
 /**
  * USB 시리얼 통신을 통한 AIS 데이터 수신 클래스
@@ -30,6 +31,9 @@ class AISDataReceiver(private val context: Context) {
     val rawMessages: StateFlow<List<String>> = _rawMessages.asStateFlow()
     
     private var onMessageReceived: ((String) -> Unit)? = null
+    
+    // 완전한 NMEA 메시지 정규식: !AIVDM 또는 !AIVDO로 시작하고 체크섬으로 끝나는 메시지
+    private val nmeaMessagePattern = Pattern.compile("^!AIVD[MO],.*\\*[0-9A-Fa-f]{2}\\r?\\n?$")
     
     /**
      * 메시지 수신 콜백 설정
@@ -117,11 +121,15 @@ class AISDataReceiver(private val context: Context) {
                             lines.dropLast(1)
                         }
                         
-                        // 완전한 메시지 처리
-                        lines.filter { it.isNotEmpty() && (it.startsWith("!AIVDM") || it.startsWith("!AIVDO")) }
+                        // 완전한 메시지 처리 (정규식으로 검증)
+                        lines.filter { line ->
+                            val trimmed = line.trim()
+                            trimmed.isNotEmpty() && nmeaMessagePattern.matcher(trimmed).matches()
+                        }
                             .forEach { message ->
-                                onMessageReceived?.invoke(message)
-                                _rawMessages.value = _rawMessages.value + message
+                                val trimmed = message.trim()
+                                onMessageReceived?.invoke(trimmed)
+                                _rawMessages.value = _rawMessages.value + trimmed
                             }
                     }
                 } catch (e: IOException) {

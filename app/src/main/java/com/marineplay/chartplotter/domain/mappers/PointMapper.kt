@@ -3,53 +3,53 @@ package com.marineplay.chartplotter.domain.mappers
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import android.graphics.Color as AndroidColor
-import com.marineplay.chartplotter.SavedPoint
-import com.marineplay.chartplotter.helpers.PointHelper
+import com.marineplay.chartplotter.SavedPoint as UiSavedPoint
+import com.marineplay.chartplotter.data.models.SavedPoint as DataSavedPoint
 
 /**
- * PointHelper.SavedPoint와 SavedPoint 간의 타입 변환을 담당하는 Mapper
+ * DataSavedPoint와 UiSavedPoint 간의 타입 변환을 담당하는 Mapper
  */
 object PointMapper {
     /**
-     * PointHelper.SavedPoint를 SavedPoint로 변환
+     * DataSavedPoint를 UiSavedPoint로 변환
      */
-    fun toUiPoint(pointHelperPoint: PointHelper.SavedPoint): SavedPoint {
-        return SavedPoint(
-            name = pointHelperPoint.name,
-            latitude = pointHelperPoint.latitude,
-            longitude = pointHelperPoint.longitude,
-            color = Color(pointHelperPoint.color.toArgb()),
-            iconType = pointHelperPoint.iconType,
-            timestamp = pointHelperPoint.timestamp
+    fun toUiPoint(dataPoint: DataSavedPoint): UiSavedPoint {
+        return UiSavedPoint(
+            name = dataPoint.name,
+            latitude = dataPoint.latitude,
+            longitude = dataPoint.longitude,
+            color = Color(dataPoint.color), // dataPoint.color는 이미 Int 타입
+            iconType = dataPoint.iconType,
+            timestamp = dataPoint.timestamp
         )
     }
     
     /**
-     * PointHelper.SavedPoint 리스트를 SavedPoint 리스트로 변환
+     * DataSavedPoint 리스트를 UiSavedPoint 리스트로 변환
      */
-    fun toUiPoints(points: List<PointHelper.SavedPoint>): List<SavedPoint> {
+    fun toUiPoints(points: List<DataSavedPoint>): List<UiSavedPoint> {
         return points.map { toUiPoint(it) }
     }
     
     /**
-     * SavedPoint를 PointHelper.SavedPoint로 변환
+     * UiSavedPoint를 DataSavedPoint로 변환
      */
-    fun toHelperPoint(uiPoint: SavedPoint): PointHelper.SavedPoint {
-        return PointHelper.SavedPoint(
+    fun toDataPoint(uiPoint: UiSavedPoint): DataSavedPoint {
+        return DataSavedPoint(
             name = uiPoint.name,
             latitude = uiPoint.latitude,
             longitude = uiPoint.longitude,
-            color = AndroidColor.valueOf(uiPoint.color.toArgb()),
+            color = uiPoint.color.toArgb(), // Int 타입으로 직접 사용
             iconType = uiPoint.iconType,
             timestamp = uiPoint.timestamp
         )
     }
     
     /**
-     * SavedPoint 리스트를 PointHelper.SavedPoint 리스트로 변환
+     * UiSavedPoint 리스트를 DataSavedPoint 리스트로 변환
      */
-    fun toHelperPoints(points: List<SavedPoint>): List<PointHelper.SavedPoint> {
-        return points.map { toHelperPoint(it) }
+    fun toDataPoints(points: List<UiSavedPoint>): List<DataSavedPoint> {
+        return points.map { toDataPoint(it) }
     }
 }
 

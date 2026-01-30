@@ -3,14 +3,16 @@ package com.marineplay.chartplotter.domain.usecases
 import androidx.compose.ui.graphics.toArgb
 import android.graphics.Color as AndroidColor
 import androidx.compose.ui.graphics.Color as ComposeColor
-import com.marineplay.chartplotter.helpers.PointHelper
+import com.marineplay.chartplotter.data.models.SavedPoint
+import com.marineplay.chartplotter.domain.repositories.PointRepository
 import org.maplibre.android.geometry.LatLng
 
 /**
  * 포인트 등록 UseCase
  */
 class RegisterPointUseCase(
-    private val pointHelper: PointHelper
+    private val pointRepository: PointRepository,
+    private val getNextAvailablePointNumberUseCase: GetNextAvailablePointNumberUseCase
 ) {
     /**
      * 포인트를 등록합니다.
@@ -20,30 +22,32 @@ class RegisterPointUseCase(
      * @param iconType 포인트 아이콘 타입
      * @return 등록된 포인트 목록
      */
-    fun execute(
+    suspend fun execute(
         latLng: LatLng,
         name: String,
         color: ComposeColor,
         iconType: String = "circle"
-    ): List<PointHelper.SavedPoint> {
+    ): List<SavedPoint> {
         val finalName = if (name.isBlank()) {
             // 자동 포인트명 생성
-            val nextNumber = GetNextAvailablePointNumberUseCase(pointHelper).execute()
+            val nextNumber = getNextAvailablePointNumberUseCase.execute()
             "Point$nextNumber"
         } else {
             name
         }
         
-        // Compose Color를 Android Color로 변환
-        val androidColor = AndroidColor.valueOf(color.toArgb())
+        // Compose Color를 Int로 변환
+        val colorInt = color.toArgb()
         
-        return pointHelper.addPoint(
+        val newPoint = SavedPoint(
             name = finalName,
             latitude = latLng.latitude,
             longitude = latLng.longitude,
-            color = androidColor,
+            color = colorInt,
             iconType = iconType
         )
+        
+        return pointRepository.addSavedPoint(newPoint)
     }
 }
 

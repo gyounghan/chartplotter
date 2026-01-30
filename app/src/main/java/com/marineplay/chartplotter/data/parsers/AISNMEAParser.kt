@@ -1,5 +1,6 @@
 package com.marineplay.chartplotter.data.parsers
 
+import android.util.Log
 import com.marineplay.chartplotter.domain.entities.AISVessel
 import com.marineplay.chartplotter.domain.entities.RiskLevel
 import com.marineplay.chartplotter.domain.entities.VesselType
@@ -11,6 +12,14 @@ import kotlin.math.*
  * Data 레이어에 위치하여 외부 데이터를 Domain Entity로 변환
  */
 object AISNMEAParser {
+    
+    /**
+     * 소수점 자릿수 제한 (반올림)
+     */
+    private fun roundToDecimalPlaces(value: Double, decimalPlaces: Int): Double {
+        val multiplier = 10.0.pow(decimalPlaces)
+        return round(value * multiplier) / multiplier
+    }
     
     /**
      * NMEA 메시지를 파싱하여 AISVessel로 변환
@@ -30,29 +39,80 @@ object AISNMEAParser {
                 return null
             }
             
+            // 완전한 메시지인지 확인 (체크섬 구분자 '*'가 있어야 함)
+            if (!nmeaMessage.contains("*")) {
+                // 아직 완성되지 않은 메시지 - 조용히 무시
+                return null
+            }
+            
             val parts = nmeaMessage.split(",")
             if (parts.size < 6) {
                 return null
             }
-            
             val encodedData = parts[5]
             if (encodedData.isEmpty()) {
                 return null
             }
             
+            Log.d("[AISNMEAParser]", "NMEA 메시지 parts: $parts")
+            // padding 정보 추출 (parts[6]에 있음, 없으면 0)
+            val padding = if (parts.size > 6) {
+                // parts[6]은 "패딩*체크섬" 형태이므로 '*' 이전 숫자만 추출
+                parts[6].split("*").firstOrNull()?.toIntOrNull() ?: 0
+            } else {
+                0
+            }
+            
             // 6비트 ASCII 인코딩된 데이터를 바이너리로 디코딩
-            val binaryData = decode6BitASCII(encodedData)
+            var binaryData = decode6BitASCII(encodedData)
+            
+            // padding 비트 제거 (마지막 padding 비트만큼 제거)
+            if (padding > 0 && binaryData.isNotEmpty()) {
+                val bitsToRemove = padding
+                if (bitsToRemove < binaryData.length) {
+                    binaryData = binaryData.substring(0, binaryData.length - bitsToRemove)
+                }
+            }
             if (binaryData.isEmpty()) {
                 return null
             }
             
-            // 메시지 타입 확인 (첫 6비트)
-            val messageType = binaryData.substring(0, 6).toInt(2)
+            // 메시지 타입 확인 전에 최소 길이 검증 (최소 6비트 필요)
+            if (binaryData.length < 6) {
+                Log.w("[AISNMEAParser]", "바이너리 데이터가 너무 짧습니다: ${binaryData.length} 비트 (메시지 타입 확인 불가)")
+                return null
+            }
             
-            return when (messageType) {
-                1, 2, 3 -> parsePositionReport(binaryData, currentLatitude, currentLongitude)
-                5 -> parseStaticData(binaryData)
-                else -> null
+            // 메시지 타입 확인 (첫 6비트)
+            val messageType = try {
+                binaryData.substring(0, 6).toInt(2)
+            } catch (e: Exception) {
+                Log.w("[AISNMEAParser]", "메시지 타입 파싱 실패: ${e.message}, binaryData 길이: ${binaryData.length}")
+                return null
+            }
+            
+            // 메시지 타입별 최소 길이 검증
+            when (messageType) {
+                1, 2, 3 -> {
+                    // Position Report는 최소 168비트 필요
+                    if (binaryData.length < 168) {
+                        // Log.w("[AISNMEAParser]", "Position Report 메시지가 너무 짧습니다: 타입=$messageType, 길이=${binaryData.length} 비트 (최소 168비트 필요)")
+                        return null
+                    }
+                    return parsePositionReport(binaryData, currentLatitude, currentLongitude)
+                }
+                5 -> {
+                    // Static Data는 최소 424비트 필요
+                    if (binaryData.length < 424) {
+                        // Log.w("[AISNMEAParser]", "Static Data 메시지가 너무 짧습니다: 길이=${binaryData.length} 비트 (최소 424비트 필요)")
+                        return null
+                    }
+                    return parseStaticData(binaryData)
+                }
+                else -> {
+                    // Log.d("[AISNMEAParser]", "지원하지 않는 메시지 타입: $messageType (길이: ${binaryData.length} 비트)")
+                    return null
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -69,37 +129,122 @@ object AISNMEAParser {
         currentLongitude: Double?
     ): AISVessel? {
         try {
-            var bitIndex = 6 // 메시지 타입 이후부터 시작
+            // Type 1/2/3 (Position Report): msgType(6) + repeat(2) 이후부터 시작 => MMSI는 bit 8부터
+            var bitIndex = 8
+            
+            // 최소 길이 검증 (Position Report는 최소 168비트 필요)
+            // 이미 parseNMEAMessage에서 검증했지만, 추가 안전장치
+            if (binaryData.length < 168) {
+                Log.w("[AISNMEAParser]", "Position Report 메시지 길이가 너무 짧습니다: ${binaryData.length} 비트 (최소 168비트 필요)")
+                return null
+            }
             
             // MMSI (30비트)
-            val mmsi = binaryData.substring(bitIndex, bitIndex + 30).toInt(2).toString()
+            if (bitIndex + 30 > binaryData.length) {
+                Log.e("[AISNMEAParser]", "MMSI 파싱 실패: bitIndex=$bitIndex, length=${binaryData.length}")
+                return null
+            }
+            // MMSI는 30bit이며 Int 범위를 넘지 않지만 안전하게 Long으로 변환 후 문자열화
+            val mmsi = binaryData.substring(bitIndex, bitIndex + 30).toLong(2).toString()
             bitIndex += 30
             
             // 내비게이션 상태 (4비트)
+            if (bitIndex + 4 > binaryData.length) return null
             bitIndex += 4
             
             // 회전율 (8비트)
+            if (bitIndex + 8 > binaryData.length) return null
             bitIndex += 8
             
             // 속도 (10비트, 0.1 노트 단위)
+            // 1023 = not available (데이터 없음)
+            if (bitIndex + 10 > binaryData.length) return null
             val speedRaw = binaryData.substring(bitIndex, bitIndex + 10).toInt(2)
-            val speed = if (speedRaw == 1023) 0.0 else speedRaw / 10.0
+            val speed = if (speedRaw == 1023) {
+                null // 데이터 없음 (0.0으로 처리하지 않음)
+            } else {
+                speedRaw / 10.0
+            }
             bitIndex += 10
             
             // 위치 정확도 (1비트)
+            if (bitIndex + 1 > binaryData.length) return null
             bitIndex += 1
             
-            // 경도 (28비트, 1/10000분 단위)
-            val longitudeRaw = binaryData.substring(bitIndex, bitIndex + 28).toInt(2)
-            val longitude = if (longitudeRaw == 0x6791AC0) null else longitudeRaw / 600000.0
+            // 경도 (28비트 signed integer, 1/10000 minute 단위)
+            // degree = raw / 600000.0
+            if (bitIndex + 28 > binaryData.length) {
+                Log.w("[AISNMEAParser]", "경도 비트 추출 실패: bitIndex=$bitIndex, length=${binaryData.length}")
+                return null
+            }
+            val longitudeRawBits = binaryData.substring(bitIndex, bitIndex + 28)
+            // Signed integer 변환: 최상위 비트가 1이면 음수
+            val longitudeRaw = if (longitudeRawBits[0] == '1') {
+                // 음수: 2의 보수 변환
+                val unsigned = longitudeRawBits.toLong(2)
+                val signed = unsigned - (1L shl 28)
+                signed.toInt()
+            } else {
+                longitudeRawBits.toInt(2)
+            }
+            // Invalid longitude = 0x6791AC0 (181 deg in 1/10000 minute)
+            val longitudeDeg = if (longitudeRaw == 0x6791AC0.toInt()) {
+                null
+            } else {
+                val lon = longitudeRaw / 600000.0
+                // 경도 범위 검증: -180 ~ 180
+                if (lon < -180.0 || lon > 180.0) {
+                    Log.w("[AISNMEAParser]", "잘못된 경도 값: $lon (raw: $longitudeRaw, bits: $longitudeRawBits, binaryLength: ${binaryData.length})")
+                    null
+                } else {
+                    // 소수점 6자리로 제한 (약 10cm 정밀도)
+                    roundToDecimalPlaces(lon, 6)
+                }
+            }
             bitIndex += 28
             
-            // 위도 (27비트, 1/10000분 단위)
-            val latitudeRaw = binaryData.substring(bitIndex, bitIndex + 27).toInt(2)
-            val latitude = if (latitudeRaw == 0x3412140) null else latitudeRaw / 600000.0
+            // 위도 (27비트 signed integer, 1/10000 minute 단위)
+            // degree = raw / 600000.0
+            if (bitIndex + 27 > binaryData.length) {
+                Log.w("[AISNMEAParser]", "위도 비트 추출 실패: bitIndex=$bitIndex, length=${binaryData.length}")
+                return null
+            }
+            val latitudeRawBits = binaryData.substring(bitIndex, bitIndex + 27)
+            // Signed integer 변환: 최상위 비트가 1이면 음수
+            val latitudeRaw = if (latitudeRawBits[0] == '1') {
+                // 음수: 2의 보수 변환
+                val unsigned = latitudeRawBits.toLong(2)
+                val signed = unsigned - (1L shl 27)
+                signed.toInt()
+            } else {
+                latitudeRawBits.toInt(2)
+            }
+            // Invalid latitude = 0x3412140 (91 deg in 1/10000 minute)
+            val latitudeDeg = if (latitudeRaw == 0x3412140.toInt()) {
+                null
+            } else {
+                val lat = latitudeRaw / 600000.0
+                // 위도 범위 검증: -90 ~ 90
+                if (lat < -90.0 || lat > 90.0) {
+                    Log.w("[AISNMEAParser]", "잘못된 위도 값: $lat (raw: $latitudeRaw, bits: $latitudeRawBits, binaryLength: ${binaryData.length})")
+                    null
+                } else {
+                    // 소수점 6자리로 제한 (약 10cm 정밀도)
+                    roundToDecimalPlaces(lat, 6)
+                }
+            }
             bitIndex += 27
+
+            // 위/경도 파싱 성공 로그를 한번에 출력 (MMSI 포함)
+            if (latitudeDeg != null && longitudeDeg != null) {
+                Log.d(
+                    "[AISNMEAParser]",
+                    "좌표 파싱 성공 (MMSI=$mmsi): lat=$latitudeDeg (raw=$latitudeRaw bits=$latitudeRawBits), lon=$longitudeDeg (raw=$longitudeRaw bits=$longitudeRawBits)"
+                )
+            }
             
             // 침로 (12비트, 0.1도 단위)
+            if (bitIndex + 12 > binaryData.length) return null
             val cogRaw = binaryData.substring(bitIndex, bitIndex + 12).toInt(2)
             val course = if (cogRaw == 3600) 0.0 else cogRaw / 10.0
             bitIndex += 12
@@ -108,18 +253,29 @@ object AISNMEAParser {
             val vesselType = VesselType.OTHER
             
             // 거리, 베어링, CPA, TCPA 계산
+            // speed가 null이면 (1023 = not available) CPA/TCPA 계산 불가
             val (distance, bearing, cpa, tcpa) = if (currentLatitude != null && currentLongitude != null && 
-                latitude != null && longitude != null) {
+                latitudeDeg != null && longitudeDeg != null && speed != null) {
                 calculateVesselMetrics(
                     currentLatitude!!,
                     currentLongitude!!,
-                    latitude,
-                    longitude,
+                    latitudeDeg,
+                    longitudeDeg,
                     speed,
                     course
                 )
             } else {
-                Quadruple(0.0, 0, 0.0, 0)
+                // 위치 정보만으로 거리와 베어링 계산
+                if (currentLatitude != null && currentLongitude != null && 
+                    latitudeDeg != null && longitudeDeg != null) {
+                    val distanceMeters = calculateDistance(currentLatitude!!, currentLongitude!!, latitudeDeg, longitudeDeg)
+                    val distanceNauticalMiles = distanceMeters / 1852.0
+                    val bearing = calculateBearing(currentLatitude!!, currentLongitude!!, latitudeDeg, longitudeDeg).toInt()
+                    // speed가 없으면 CPA/TCPA 계산 불가
+                    Quadruple(distanceNauticalMiles, bearing, Double.MAX_VALUE, Int.MAX_VALUE)
+                } else {
+                    Quadruple(0.0, 0, 0.0, 0)
+                }
             }
             val riskLevel = calculateRiskLevel(distance, cpa, tcpa)
             
@@ -130,18 +286,18 @@ object AISNMEAParser {
                 type = vesselType,
                 distance = distance,
                 bearing = bearing,
-                speed = speed,
+                speed = speed ?: 0.0, // null이면 0.0으로 저장 (표시용, 계산에는 사용 안 함)
                 course = course.toInt(),
                 cpa = cpa,
                 tcpa = tcpa,
                 riskLevel = riskLevel,
                 isWatchlisted = false,
                 lastUpdate = System.currentTimeMillis(),
-                latitude = latitude,
-                longitude = longitude
+                latitude = latitudeDeg,
+                longitude = longitudeDeg
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("[AISNMEAParser]", "parsePositionReport 실패: ${e.message}", e)
             return null
         }
     }
@@ -151,27 +307,44 @@ object AISNMEAParser {
      */
     private fun parseStaticData(binaryData: String): AISVessel? {
         try {
-            var bitIndex = 6 // 메시지 타입 이후부터 시작
+            // Type 5 (Static and Voyage Related Data): msgType(6) + repeat(2) + MMSI(30) ...
+            // MMSI는 bit 8부터 시작해야 함
+            var bitIndex = 8
+            
+            // 최소 길이 검증 (메시지 타입 6 + MMSI 30 + 버전 2 + IMO 30 + 호출부호 42 + 이름 120 = 230비트)
+            if (binaryData.length < 230) {
+                Log.e("[AISNMEAParser]", "Static Data 메시지 길이가 너무 짧습니다: ${binaryData.length} 비트")
+                return null
+            }
             
             // MMSI (30비트)
-            val mmsi = binaryData.substring(bitIndex, bitIndex + 30).toInt(2).toString()
+            if (bitIndex + 30 > binaryData.length) return null
+            val mmsi = binaryData.substring(bitIndex, bitIndex + 30).toLong(2).toString()
             bitIndex += 30
             
             // AIS 버전 (2비트)
+            if (bitIndex + 2 > binaryData.length) return null
             bitIndex += 2
             
             // IMO 번호 (30비트)
+            if (bitIndex + 30 > binaryData.length) return null
             bitIndex += 30
             
             // 호출 부호 (42비트, 7자)
+            if (bitIndex + 42 > binaryData.length) return null
             bitIndex += 42
             
             // 선박 이름 (120비트, 20자)
+            if (bitIndex + 120 > binaryData.length) {
+                Log.e("[AISNMEAParser]", "선박 이름 파싱 실패: bitIndex=$bitIndex, length=${binaryData.length}")
+                return null
+            }
             val nameBytes = binaryData.substring(bitIndex, bitIndex + 120)
             val name = decode6BitString(nameBytes).trim { it <= ' ' }
             bitIndex += 120
             
             // 선박 타입 (8비트)
+            if (bitIndex + 8 > binaryData.length) return null
             val shipTypeCode = binaryData.substring(bitIndex, bitIndex + 8).toInt(2)
             val vesselType = mapShipTypeCode(shipTypeCode)
             bitIndex += 8
@@ -195,7 +368,7 @@ object AISNMEAParser {
                 longitude = null
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("[AISNMEAParser]", "parsePositionReport 실패: ${e.message}", e)
             return null
         }
     }
@@ -323,6 +496,16 @@ object AISNMEAParser {
             return RiskLevel.CRITICAL
         }
         
+        // CPA/TCPA가 계산 불가능한 경우 (Double.MAX_VALUE, Int.MAX_VALUE)
+        if (cpa >= Double.MAX_VALUE / 2 || tcpa >= Int.MAX_VALUE / 2) {
+            // 속도 정보가 없어서 CPA/TCPA 계산 불가 - 거리만으로 판단
+            return when {
+                distance < 0.5 -> RiskLevel.CRITICAL
+                distance < 2.0 -> RiskLevel.WARNING
+                else -> RiskLevel.SAFE
+            }
+        }
+        
         return when {
             cpa < 0.5 && tcpa < 10 -> RiskLevel.CRITICAL
             cpa < 2.0 && tcpa < 30 -> RiskLevel.WARNING
@@ -394,13 +577,24 @@ object AISNMEAParser {
     }
     
     /**
-     * 6비트 ASCII 디코딩
+     * 6비트 ASCII를 바이너리 문자열로 디코딩
+     * AIS 6-bit encoding 규칙 (ITU-R M.1371):
+     * - 0-63: ASCII 48-87 (0-9, :, ;, <, =, >, ?, @, A-W)
+     * - 64-127: ASCII 96-127 (`, a-w) -> 64-87로 매핑
+     * 정확한 규칙: if (char <= 'W') value = char - 48, else value = char - 56
      */
     private fun decode6BitASCII(data: String): String {
         val builder = StringBuilder()
         for (char in data) {
-            val value = char.code - 48
-            if (value < 0 || value > 63) continue
+            val value = if (char <= 'W') {
+                char.code - 48
+            } else {
+                char.code - 56
+            }
+            if (value < 0 || value > 63) {
+                Log.w("[AISNMEAParser]", "6비트 디코딩 실패: char='$char' (code=${char.code}), value=$value")
+                continue
+            }
             val binary = Integer.toBinaryString(value)
             builder.append(binary.padStart(6, '0'))
         }
