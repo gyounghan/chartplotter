@@ -12,6 +12,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
@@ -49,8 +51,11 @@ class TidalCurrentOverlay(
     private var cameraListenerRegistered = false
     private var mapRef: MapLibreMap? = null
 
-    // minuteOfDay(0..1439) -> points list (CSV의 실제 좌표를 그대로 사용)
-    private val pointsByMinute: List<List<PointRow>> = loadCsvPoints(assetCsvPath)
+    // ✅ 생성자에서 로딩하지 않고 lazy로 변경 (백그라운드 로딩)
+    private val pointsByMinute: List<List<PointRow>> by lazy {
+        loadCsvPoints(assetCsvPath)
+    }
+    private var csvLoaded = false
     private val speedFormat = DecimalFormat("0.0")
 
     data class PointRow(
@@ -63,27 +68,67 @@ class TidalCurrentOverlay(
     )
 
     fun start(map: MapLibreMap) {
-        // 이미 동작 중이면 재시작하지 않음
-        if (job?.isActive == true) return
+        // 기존 작업이 있으면 취소 (재시작 보장)
+        job?.cancel()
+        job = null
         mapRef = map
 
         map.getStyle { style ->
             try {
+                // ✅ 파일 존재 여부 먼저 체크
+                if (!checkCsvExists(assetCsvPath)) {
+                    Log.w("[TidalCurrentOverlay]", "CSV 파일이 없습니다: $assetCsvPath - Overlay 시작 안 함")
+                    return@getStyle
+                }
+                
                 ensureStyleObjects(style)
                 ensureCameraListener(map)
-                // 첫 렌더 즉시 1회
-                updateForView(map)
-                // 이후 1분마다 갱신 (분 경계에 맞추지 않고 단순 60초 주기)
-                job = scope.launch {
-                    while (isActive) {
-                        delay(60_000)
-                        mapRef?.let { updateForView(it) }
+                
+                // ✅ CSV 로딩을 백그라운드로
+                if (!csvLoaded) {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            // 백그라운드에서 로딩
+                            pointsByMinute.size // lazy 초기화
+                            csvLoaded = true
+                            
+                            withContext(Dispatchers.Main) {
+                                updateForView(map)
+                                // 이후 1분마다 갱신
+                                job = scope.launch {
+                                    while (isActive) {
+                                        delay(60_000)
+                                        mapRef?.let { updateForView(it) }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("[TidalCurrentOverlay]", "CSV 로딩 실패: ${e.message}", e)
+                        }
+                    }
+                } else {
+                    updateForView(map)
+                    job = scope.launch {
+                        while (isActive) {
+                            delay(60_000)
+                            mapRef?.let { updateForView(it) }
+                        }
                     }
                 }
+                
                 Log.d("[TidalCurrentOverlay]", "started (asset=$assetCsvPath)")
             } catch (e: Exception) {
                 Log.e("[TidalCurrentOverlay]", "start failed: ${e.message}", e)
             }
+        }
+    }
+    
+    // ✅ 파일 존재 여부 체크
+    private fun checkCsvExists(path: String): Boolean {
+        return try {
+            context.assets.open(path).use { true }
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -160,6 +205,9 @@ class TidalCurrentOverlay(
      * ✅ 줌 레벨에 따라 샘플링 간격을 조절해서 "줌 낮으면 대표 몇 개, 줌 높으면 촘촘히" 구현.
      */
     private fun updateForView(map: MapLibreMap) {
+        // ✅ CSV 로딩 안 됐으면 스킵
+        if (!csvLoaded) return
+        
         val minute = nowMinuteOfDay()
         val points = pointsByMinute.getOrNull(minute) ?: return
 

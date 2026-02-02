@@ -152,6 +152,7 @@ class LocationManager(
     private var savedZoomLevel: Double? = null // 사용자가 설정한 줌 레벨 저장
     private var rotationVector: Sensor? =
         sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    private var isLocationUpdatesActive = false // 위치 업데이트 활성화 상태
     
     // 위치 재시도용 Handler
     private val retryHandler = android.os.Handler(Looper.getMainLooper())
@@ -233,6 +234,12 @@ class LocationManager(
             return
         }
 
+        // 이미 위치 업데이트가 활성화되어 있으면 중복 호출 방지
+        if (isLocationUpdatesActive) {
+            Log.d("[LocationManager]", "위치 업데이트가 이미 활성화되어 있습니다. 중복 호출 무시.")
+            return
+        }
+
         try {
             // Google Play Services FusedLocationProvider 사용
             // 가상기기에서도 동작하도록 BALANCED_POWER_ACCURACY 사용 (GPS 실패 시 네트워크 자동 사용)
@@ -258,6 +265,7 @@ class LocationManager(
             // 위치를 못 받았을 때 재시도 시작
             startLocationRetry()
             
+            isLocationUpdatesActive = true
             Log.d("[LocationManager]", "FusedLocationProvider 위치 추적 시작")
         } catch (e: SecurityException) {
             Log.e("[LocationManager]", "권한 오류: ${e.message}")
@@ -301,6 +309,7 @@ class LocationManager(
             // 위치를 못 받았을 때 재시도 시작
             startLocationRetry()
             
+            isLocationUpdatesActive = true
             Log.d("[LocationManager]", "백업 위치 추적 시작 (provider=$provider)")
         } catch (e: Exception) {
             Log.e("[LocationManager]", "백업 위치 추적 실패: ${e.message}")
@@ -333,6 +342,11 @@ class LocationManager(
 
     /** 위치 추적 중지 */
     fun stopLocationUpdates() {
+        if (!isLocationUpdatesActive) {
+            Log.d("[LocationManager]", "위치 업데이트가 이미 중지되어 있습니다.")
+            return
+        }
+        
         try { 
             // FusedLocationProvider 중지
             fusedLocationClient.removeLocationUpdates(locationCallback)
@@ -341,6 +355,8 @@ class LocationManager(
             // 재시도 중지
             stopLocationRetry()
         } catch (_: Exception) {}
+        
+        isLocationUpdatesActive = false
         Log.d("[LocationManager]", "위치 추적이 중지되었습니다.")
     }
     
@@ -426,7 +442,7 @@ class LocationManager(
             // 첫 번째 위치에서는 자동 추적을 활성화
             if (isFirstLocation) {
                 isAutoTracking = true
-                Log.d("[LocationManager]", "첫 번째 위치 획득으로 자동 추적 활성화")
+                Log.d("[LocationManager]", "첫 번째 GPS 위치 획득 - 자동 추적 활성화 및 카메라 이동: ${location.latitude}, ${location.longitude}")
             }
         }
     }

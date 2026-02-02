@@ -36,7 +36,13 @@ fun ChartPlotterMap(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // MapView는 한 번만 생성
-    val mapView = remember { MapView(context) }
+    val mapView = remember {
+        val createStartTime = System.currentTimeMillis()
+        val view = MapView(context)
+        val createElapsed = System.currentTimeMillis() - createStartTime
+        Log.d("[ChartPlotterMap]", "⏱️ [MapView 생성] - ${createElapsed}ms")
+        view
+    }
     var mapLibreMapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
 
     // MapView 생명주기 연결
@@ -64,115 +70,167 @@ fun ChartPlotterMap(
         if (isDialogShown) mapView.onPause() else mapView.onResume()
     }
     
-
     // Map이 준비되었을 때 1회만 초기 설정
     val mapConfigured = remember { mutableStateOf(false) }
+    
+    // ✅ getMapAsync는 LaunchedEffect에서 한 번만 호출
+    LaunchedEffect(Unit) {
+        if (!mapConfigured.value) {
+            val getMapAsyncStartTime = System.currentTimeMillis()
+            Log.d("[ChartPlotterMap]", "📞 [시작] getMapAsync 호출 (한 번만)")
+            
+            mapView.getMapAsync { map ->
+                val getMapAsyncElapsed = System.currentTimeMillis() - getMapAsyncStartTime
+                Log.d("[ChartPlotterMap]", "⏱️ [getMapAsync 완료] - ${getMapAsyncElapsed}ms")
+                
+                val onMapReadyStartTime = System.currentTimeMillis()
+                Log.d("[ChartPlotterMap]", "🗺️ [시작] onMapReady 콜백")
+                
+                // MapLibreMap 인스턴스 저장
+                mapLibreMapInstance = map
+                
+                if (!mapConfigured.value) {
+                    val cameraStartTime = System.currentTimeMillis()
+                    // 기본 위치 설정 (GPS 수신 전에도 맵이 즉시 표시되도록)
+                    val centerPoint = LatLng(35.136565, 129.071632)
+                    map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                        .target(centerPoint)
+                        .zoom(11.0)
+                        .build()
+                    val cameraElapsed = System.currentTimeMillis() - cameraStartTime
+                    Log.d("[ChartPlotterMap]", "⏱️ [카메라 설정] 기본 위치: $centerPoint - ${cameraElapsed}ms")
 
+                    val pmtilesStartTime = System.currentTimeMillis()
+                    PMTilesLoader.loadPMTilesFromAssets(context, map)
+                    val pmtilesElapsed = System.currentTimeMillis() - pmtilesStartTime
+                    Log.d("[ChartPlotterMap]", "⏱️ [PMTiles 로드 호출] - ${pmtilesElapsed}ms")
+
+                    mapConfigured.value = true
+                    
+                    val callbackStartTime = System.currentTimeMillis()
+                    onMapReady(map)
+                    val callbackElapsed = System.currentTimeMillis() - callbackStartTime
+                    Log.d("[ChartPlotterMap]", "⏱️ [onMapReady 콜백 호출] - ${callbackElapsed}ms")
+                    
+                    val totalElapsed = System.currentTimeMillis() - onMapReadyStartTime
+                    Log.d("[ChartPlotterMap]", "✅ [완료] onMapReady (총 ${totalElapsed}ms)")
+                } else {
+                    val totalElapsed = System.currentTimeMillis() - onMapReadyStartTime
+                    Log.d("[ChartPlotterMap]", "⏭️ [스킵] 이미 설정됨 - ${totalElapsed}ms")
+                }
+            }
+        }
+    }
+
+    // 터치 리스너 설정 여부 추적 (update 블록 밖에서 remember 사용)
+    val touchListenerSet = remember { mutableStateOf(false) }
+    
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
-            factory = { mapView },
+            factory = { 
+                val factoryStartTime = System.currentTimeMillis()
+                Log.d("[ChartPlotterMap]", "🏭 [시작] AndroidView factory")
+                val view = mapView
+                val factoryElapsed = System.currentTimeMillis() - factoryStartTime
+                Log.d("[ChartPlotterMap]", "⏱️ [완료] AndroidView factory - ${factoryElapsed}ms")
+                view
+            },
             modifier = modifier
         ) { mapViewInstance ->
-            // 터치 이벤트 리스너 추가 (드래그와 단순 터치 구분, 핀치 줌 감지)
-            var isDragging = false
-            var touchStartTime = 0L
-            var touchStartX = 0f
-            var touchStartY = 0f
-            var isPinchZoom = false  // 핀치 줌 감지용
+            // ✅ update 블록에서는 터치 리스너만 설정
+            // getMapAsync는 절대 호출하지 않음!
             
-            mapViewInstance.setOnTouchListener { _, event ->
-                // 터치 포인트 개수로 핀치 줌 감지 (더 확실한 방법)
-                val pointerCount = event.pointerCount
-                if (pointerCount > 1) {
-                    isPinchZoom = true
-                    Log.d("[MainActivity]", "핀치 줌 감지 (포인트 ${pointerCount}개) - 모든 커서 처리 차단")
-                    return@setOnTouchListener false
-                }
+            // 터치 리스너는 한 번만 설정
+            if (!touchListenerSet.value) {
+                val touchListenerStartTime = System.currentTimeMillis()
+                Log.d("[ChartPlotterMap]", "👆 [시작] 터치 리스너 설정")
                 
-                when (event.action) {
-                    android.view.MotionEvent.ACTION_DOWN -> {
-                        touchStartTime = System.currentTimeMillis()
-                        touchStartX = event.x
-                        touchStartY = event.y
-                        isDragging = false
-                        isPinchZoom = false
-                        Log.d("[MainActivity]", "터치 시작")
-                    }
-                    android.view.MotionEvent.ACTION_POINTER_DOWN -> {
-                        // 두 번째 손가락이 터치되면 핀치 줌으로 판단
+                // 터치 이벤트 리스너 추가 (드래그와 단순 터치 구분, 핀치 줌 감지)
+                // 클로저로 외부 변수 캡처
+                var isDragging = false
+                var touchStartTime = 0L
+                var touchStartX = 0f
+                var touchStartY = 0f
+                var isPinchZoom = false  // 핀치 줌 감지용
+                
+                mapViewInstance.setOnTouchListener { _, event ->
+                    // 터치 포인트 개수로 핀치 줌 감지 (더 확실한 방법)
+                    val pointerCount = event.pointerCount
+                    if (pointerCount > 1) {
                         isPinchZoom = true
-                        Log.d("[MainActivity]", "ACTION_POINTER_DOWN - 핀치 줌 감지")
+                        Log.d("[MainActivity]", "핀치 줌 감지 (포인트 ${pointerCount}개) - 모든 커서 처리 차단")
                         return@setOnTouchListener false
                     }
-                    android.view.MotionEvent.ACTION_MOVE -> {
-                        // 핀치 줌 중이면 모든 커서 관련 처리 완전히 차단
-                        if (isPinchZoom) {
+                    
+                    when (event.action) {
+                        android.view.MotionEvent.ACTION_DOWN -> {
+                            touchStartTime = System.currentTimeMillis()
+                            touchStartX = event.x
+                            touchStartY = event.y
+                            isDragging = false
+                            isPinchZoom = false
+                            Log.d("[MainActivity]", "터치 시작")
+                        }
+                        android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                            // 두 번째 손가락이 터치되면 핀치 줌으로 판단
+                            isPinchZoom = true
+                            Log.d("[MainActivity]", "ACTION_POINTER_DOWN - 핀치 줌 감지")
                             return@setOnTouchListener false
                         }
-                        
-                        // 움직임이 있으면 드래그로 판단
-                        val deltaX = Math.abs(event.x - touchStartX)
-                        val deltaY = Math.abs(event.y - touchStartY)
-                        if (deltaX > 10 || deltaY > 10) { // 10픽셀 이상 움직이면 드래그
-                            isDragging = true
-                            onTouchStart() // 드래그 중에는 커서 숨김
-                        }
-                    }
-                    android.view.MotionEvent.ACTION_UP -> {
-                        val touchDuration = System.currentTimeMillis() - touchStartTime
-                        
-                        // 핀치 줌이었다면 커서 위치 그대로 유지
-                        if (isPinchZoom) {
-                            Log.d("[MainActivity]", "핀치 줌 종료 - 커서 위치 고정 유지")
-                            return@setOnTouchListener false
-                        }
-                        
-                        // MapLibreMap이 준비된 경우에만 처리
-                        mapLibreMapInstance?.let { map ->
-                            val x = event.x
-                            val y = event.y
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            // 핀치 줌 중이면 모든 커서 관련 처리 완전히 차단
+                            if (isPinchZoom) {
+                                return@setOnTouchListener false
+                            }
                             
-                            // 화면 좌표를 지리 좌표로 변환
-                            val latLng = map.projection.fromScreenLocation(android.graphics.PointF(x, y))
-                            val screenPoint = android.graphics.PointF(x, y)
+                            // 움직임이 있으면 드래그로 판단
+                            val deltaX = Math.abs(event.x - touchStartX)
+                            val deltaY = Math.abs(event.y - touchStartY)
+                            if (deltaX > 10 || deltaY > 10) { // 10픽셀 이상 움직이면 드래그
+                                isDragging = true
+                                onTouchStart() // 드래그 중에는 커서 숨김
+                            }
+                        }
+                        android.view.MotionEvent.ACTION_UP -> {
+                            val touchDuration = System.currentTimeMillis() - touchStartTime
                             
+                            // 핀치 줌이었다면 커서 위치 그대로 유지
+                            if (isPinchZoom) {
+                                Log.d("[MainActivity]", "핀치 줌 종료 - 커서 위치 고정 유지")
+                                return@setOnTouchListener false
+                            }
+                            
+                            // MapLibreMap이 준비된 경우에만 처리
+                            mapLibreMapInstance?.let { map ->
+                                val x = event.x
+                                val y = event.y
+                                
+                                // 화면 좌표를 지리 좌표로 변환
+                                val latLng = map.projection.fromScreenLocation(android.graphics.PointF(x, y))
+                                val screenPoint = android.graphics.PointF(x, y)
 
-                            if (isDragging) {
-                                // 드래그 종료 시 커서 표시
-                                onTouchEnd(latLng, screenPoint)
-                                Log.d("[MainActivity]", "드래그 종료 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
-                            } else if (touchDuration < 500) { // 500ms 이내의 짧은 터치는 단순 클릭
-                                // 단순 터치 시 커서 표시
-                                onTouchEnd(latLng, screenPoint)
-                                Log.d("[MainActivity]", "단순 터치 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
-                            } else {
-                                // 긴 터치는 무시
-                                Log.d("[MainActivity]", "긴 터치 무시")
+                                if (isDragging) {
+                                    // 드래그 종료 시 커서 표시
+                                    onTouchEnd(latLng, screenPoint)
+                                    Log.d("[MainActivity]", "드래그 종료 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
+                                } else if (touchDuration < 500) { // 500ms 이내의 짧은 터치는 단순 클릭
+                                    // 단순 터치 시 커서 표시
+                                    onTouchEnd(latLng, screenPoint)
+                                    Log.d("[MainActivity]", "단순 터치 위치에 커서 표시: ${latLng.latitude}, ${latLng.longitude}")
+                                } else {
+                                    // 긴 터치는 무시
+                                    Log.d("[MainActivity]", "긴 터치 무시")
+                                }
                             }
                         }
                     }
+                    false // 기본 터치 이벤트 허용 (지도 이동 가능)
                 }
-                false // 기본 터치 이벤트 허용 (지도 이동 가능)
+                
+                touchListenerSet.value = true
+                val touchListenerElapsed = System.currentTimeMillis() - touchListenerStartTime
+                Log.d("[ChartPlotterMap]", "⏱️ [완료] 터치 리스너 설정 - ${touchListenerElapsed}ms")
             }
-            mapViewInstance.getMapAsync(object : OnMapReadyCallback {
-                override fun onMapReady(map: MapLibreMap) {
-                    // MapLibreMap 인스턴스 저장
-                    mapLibreMapInstance = map
-                    
-                    if (!mapConfigured.value) {
-                        val centerPoint = LatLng(35.0, 128.0)
-                        map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
-                            .target(centerPoint)
-                            .zoom(8.0)
-                            .build()
-
-                        PMTilesLoader.loadPMTilesFromAssets(context, map)
-
-                        mapConfigured.value = true       // ⬅ 재초기화 방지
-                        onMapReady(map)
-                    }
-                }
-            })
         }
 
         // 동적 커서 표시 (터치한 위치에)

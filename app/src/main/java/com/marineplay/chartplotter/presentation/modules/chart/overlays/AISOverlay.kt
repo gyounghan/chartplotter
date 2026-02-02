@@ -44,18 +44,35 @@ class AISOverlay {
     // 이전 Feature 캐시 (MMSI -> Feature)
     private val previousFeatures = mutableMapOf<String, Feature>()
     
+    // ✅ 스로틀링: 500ms에 한 번만 업데이트
+    private var lastUpdateTime = 0L
+    private val updateThrottleMs = 500L
+    
+    // ✅ Bitmap 캐시
+    private var cachedTriangleBitmap: Bitmap? = null
+    
+    // ✅ 초기화 완료 플래그
+    @Volatile
+    private var isInitialized = false
+    
     /**
      * Overlay 시작 (지도 스타일이 로드된 후 호출)
+     * @param initialVessels 초기 선박 데이터 (선택적)
      */
-    fun start(map: MapLibreMap) {
-        Log.d("[AISOverlay]", "start() 호출됨")
+    fun start(map: MapLibreMap, initialVessels: List<AISVessel>? = null) {
+        Log.d("[AISOverlay]", "🚀 start() 호출됨: initialVessels=${initialVessels?.size ?: 0}개")
         mapRef = map
+        isInitialized = false // 초기화 시작
         
         map.getStyle { style ->
             try {
-                Log.d("[AISOverlay]", "지도 스타일 로드 완료, 스타일 객체 초기화 시작")
+                Log.d("[AISOverlay]", "📋 지도 스타일 로드 완료, 스타일 객체 초기화 시작")
                 ensureStyleObjects(style)
                 styleRef = style
+                
+                // ✅ 초기화 완료 플래그 설정 (geoJsonSource가 생성된 후)
+                isInitialized = geoJsonSource != null
+                Log.d("[AISOverlay]", "✅ 초기화 완료: isInitialized=$isInitialized, geoJsonSource=${geoJsonSource != null}")
                 
                 // 줌 변화 감지 리스너 추가 (스타일 로드 후)
                 map.addOnCameraMoveListener {
@@ -67,10 +84,19 @@ class AISOverlay {
                 
                 // 초기 줌 설정
                 val initialZoom = map.cameraPosition.zoom.toFloat()
-                Log.d("[AISOverlay]", "AIS overlay started 성공, 현재 줌: $initialZoom")
+                Log.d("[AISOverlay]", "✅ AIS overlay started 성공, 현재 줌: $initialZoom, 초기화 완료: $isInitialized")
                 updateTriangleSize(style, initialZoom)
+                
+                // ✅ 스타일 로드 완료 후 초기 선박 데이터 업데이트
+                if (initialVessels != null && isInitialized) {
+                    Log.d("[AISOverlay]", "📊 초기 선박 데이터 업데이트 시작: ${initialVessels.size}개")
+                    updateVessels(initialVessels)
+                } else {
+                    Log.d("[AISOverlay]", "⚠️ 초기 선박 데이터 업데이트 스킵: initialVessels=${initialVessels != null}, isInitialized=$isInitialized")
+                }
             } catch (e: Exception) {
-                Log.e("[AISOverlay]", "start failed: ${e.message}", e)
+                Log.e("[AISOverlay]", "❌ start failed: ${e.message}", e)
+                isInitialized = false
             }
         }
     }
@@ -119,6 +145,7 @@ class AISOverlay {
         mapRef = null
         styleRef = null
         previousFeatures.clear()
+        isInitialized = false // ✅ 초기화 플래그 리셋
     }
     
     /**
@@ -126,18 +153,71 @@ class AISOverlay {
      */
     fun updateVessels(vessels: List<AISVessel>) {
         try {
-            if (geoJsonSource == null) {
-                Log.w("[AISOverlay]", "AIS 소스가 아직 초기화되지 않았습니다.")
+            Log.d("[AISOverlay]", "updateVessels 호출: 총 ${vessels.size}개 선박")
+            
+            // ✅ 초기화가 완료되지 않았으면 스킵
+            if (!isInitialized || geoJsonSource == null) {
+                Log.d("[AISOverlay]", "AIS 소스가 아직 초기화되지 않았습니다. 초기화 대기 중... (isInitialized=$isInitialized, geoJsonSource=${geoJsonSource != null})")
+                return
+            }
+            
+            val now = System.currentTimeMillis()
+            
+            // ✅ 1. 스로틀링 체크: 500ms에 한 번만 업데이트
+            if (now - lastUpdateTime < updateThrottleMs) {
+                Log.d("[AISOverlay]", "스로틀링: ${now - lastUpdateTime}ms 경과 (${updateThrottleMs}ms 미만)")
+                return
+            }
+            
+            val map = mapRef ?: return
+            val zoom = map.cameraPosition.zoom.toFloat()
+            
+            Log.d("[AISOverlay]", "현재 줌: $zoom, 최소 줌: $triangleMinZoom")
+            
+            // ✅ 2. 줌 낮으면 스킵 (하지만 로그는 남김)
+            if (zoom < triangleMinZoom) {
+                Log.d("[AISOverlay]", "줌이 낮아서 스킵: $zoom < $triangleMinZoom")
+                return
+            }
+            
+            // ✅ 3. 화면 범위 계산
+            val (latSouth, latNorth, lonWest, lonEast) = try {
+                val vr = map.projection.visibleRegion
+                val corners = listOf(vr.farLeft, vr.farRight, vr.nearLeft, vr.nearRight).filterNotNull()
+                if (corners.isEmpty()) {
+                    Log.w("[AISOverlay]", "화면 범위 계산 실패: corners가 비어있음")
+                    return
+                }
+                val minLat = corners.minOf { it.latitude }
+                val maxLat = corners.maxOf { it.latitude }
+                val minLon = corners.minOf { it.longitude }
+                val maxLon = corners.maxOf { it.longitude }
+                Log.d("[AISOverlay]", "화면 범위: lat[$minLat ~ $maxLat], lon[$minLon ~ $maxLon]")
+                Bounds(minLat, maxLat, minLon, maxLon)
+            } catch (e: Exception) {
+                Log.e("[AISOverlay]", "화면 범위 계산 실패: ${e.message}", e)
                 return
             }
             
             // 유효한 좌표를 가진 선박만 필터링
-            val validVessels = vessels.filter { vessel ->
+            val validCoordinates = vessels.filter { vessel ->
                 vessel.latitude != null && 
                 vessel.longitude != null &&
                 vessel.latitude!! >= -90.0 && vessel.latitude!! <= 90.0 &&
                 vessel.longitude!! >= -180.0 && vessel.longitude!! <= 180.0
             }
+            Log.d("[AISOverlay]", "유효한 좌표를 가진 선박: ${validCoordinates.size}개")
+            
+            // ✅ 4. 화면 범위 안에 있는 선박만 (하지만 일단 모든 선박 표시하도록 주석 처리)
+            val validVessels = validCoordinates.filter { vessel ->
+                val lat = vessel.latitude!!
+                val lon = vessel.longitude!!
+                // 화면 범위 체크는 일단 비활성화 (모든 선박 표시)
+                // vessel.latitude!! >= latSouth && vessel.latitude!! <= latNorth &&
+                // vessel.longitude!! >= lonWest && vessel.longitude!! <= lonEast
+                true // 일단 모든 선박 표시
+            }
+            Log.d("[AISOverlay]", "화면 범위 내 선박: ${validVessels.size}개 (전체: ${validCoordinates.size}개)")
             
             // 현재 선박들의 MMSI 집합
             val currentMmsis = validVessels.map { it.mmsi }.toSet()
@@ -211,11 +291,15 @@ class AISOverlay {
             if (hasChanges || previousFeatures.isEmpty()) {
                 val finalFeatures = updatedFeatures.values.toList()
                 
+                Log.d("[AISOverlay]", "지도 업데이트 준비: ${finalFeatures.size}개 Feature (변경: ${changedCount}개, 제거: ${removedCount}개, hasChanges: $hasChanges)")
+                
                 if (finalFeatures.isNotEmpty()) {
                     geoJsonSource?.setGeoJson(FeatureCollection.fromFeatures(finalFeatures))
-                    Log.d("[AISOverlay]", "AIS 선박 업데이트: 총 ${finalFeatures.size}개 (변경: ${changedCount}개, 제거: ${removedCount}개)")
+                    lastUpdateTime = now // ✅ 업데이트 시간 기록
+                    Log.d("[AISOverlay]", "✅ AIS 선박 지도 업데이트 완료: 총 ${finalFeatures.size}개 (변경: ${changedCount}개, 제거: ${removedCount}개)")
                 } else {
                     geoJsonSource?.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
+                    lastUpdateTime = now
                     Log.d("[AISOverlay]", "AIS 선박 모두 제거됨")
                 }
                 
@@ -248,11 +332,13 @@ class AISOverlay {
             Log.d("[AISOverlay]", "AIS 소스 이미 존재함: $sourceId")
         }
         
-        // 삼각형 아이콘 생성 및 등록
+        // 삼각형 아이콘 생성 및 등록 (캐시 사용)
         if (style.getImage(triangleIconId) == null) {
-            val triangleBitmap = createTriangleIcon(64)
-            style.addImage(triangleIconId, triangleBitmap)
-            Log.d("[AISOverlay]", "삼각형 아이콘 생성 완료: $triangleIconId")
+            if (cachedTriangleBitmap == null) {
+                cachedTriangleBitmap = createTriangleIcon(64)
+            }
+            style.addImage(triangleIconId, cachedTriangleBitmap!!)
+            Log.d("[AISOverlay]", "삼각형 아이콘 생성 완료: $triangleIconId (캐시 사용)")
         }
         
 
@@ -323,6 +409,14 @@ class AISOverlay {
         
         Log.d("[AISOverlay]", "AIS 선박 레이어가 추가되었습니다. (Circle: $circleLayerId, Triangle: $triangleLayerId, Label: $labelLayerId)")
     }
+    
+    // ✅ 화면 범위 데이터 클래스
+    private data class Bounds(
+        val latSouth: Double,
+        val latNorth: Double,
+        val lonWest: Double,
+        val lonEast: Double
+    )
     
     /**
      * 삼각형 아이콘 생성 (북쪽을 향하는 이등변 삼각형, 밑변이 짧음)

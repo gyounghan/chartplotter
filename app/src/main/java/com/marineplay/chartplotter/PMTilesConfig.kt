@@ -398,10 +398,103 @@ object PMTilesManager {
     }
     
     /**
+     * 파일명으로부터 기본 설정을 자동 생성
+     * 규칙:
+     * - l_로 시작 -> LINE 타입
+     * - a_로 시작 -> AREA 타입
+     * - p_로 시작 -> TEXT 타입 (기본값)
+     */
+    fun createDefaultConfigFromFileName(fileName: String): PMTilesConfig {
+        val baseName = fileName.removeSuffix(".pmtiles")
+        
+        // 파일명 규칙에 따라 레이어 타입 결정
+        val (layerType, sourceLayer, textField) = when {
+            // l_로 시작 -> LINE
+            baseName.startsWith("l_") -> {
+                val layerName = baseName.removePrefix("l_")
+                Triple(
+                    LayerType.LINE,
+                    layerName.ifEmpty { "line_map" },
+                    "VALUE"
+                )
+            }
+            // a_로 시작 -> AREA
+            baseName.startsWith("a_") -> {
+                val layerName = baseName.removePrefix("a_")
+                Triple(
+                    LayerType.AREA,
+                    layerName.ifEmpty { "area_map" },
+                    "VALUE"
+                )
+            }
+            // p_로 시작 -> TEXT (기본값)
+            baseName.startsWith("p_") -> {
+                val layerName = baseName.removePrefix("p_")
+                // p_ 다음 부분에서 실제 레이어명 추출 (예: p_soundg_1 -> soundg)
+                val actualLayerName = layerName.split("_").firstOrNull() ?: layerName
+                Triple(
+                    LayerType.TEXT,
+                    actualLayerName,
+                    when {
+                        actualLayerName.contains("soundg") -> "ELEVATION"
+                        actualLayerName.contains("sbdare") -> "NATSUR_Nat"
+                        else -> "VALUE"
+                    }
+                )
+            }
+            // 기존 파일명 호환성 (fallback)
+            baseName.startsWith("line") -> Triple(
+                LayerType.LINE,
+                "line_map",
+                "VALUE"
+            )
+            baseName.startsWith("area") -> Triple(
+                LayerType.AREA,
+                "area_map",
+                "VALUE"
+            )
+            // 기본값: TEXT
+            else -> Triple(
+                LayerType.TEXT,
+                baseName,
+                "VALUE"
+            )
+        }
+        
+        // sourceName 생성
+        val sourceName = "${baseName}-source"
+        
+        // 색상 매핑 결정
+        val colorMapping = when (layerType) {
+            LayerType.LINE -> defaultColorMappings["lineTiles"] ?: emptyMap()
+            LayerType.AREA -> defaultColorMappings["areaTiles"] ?: emptyMap()
+            else -> emptyMap()
+        }
+        
+        return PMTilesConfig(
+            fileName = fileName,
+            sourceName = sourceName,
+            sourceLayer = sourceLayer,
+            layerType = layerType,
+            colorMapping = colorMapping,
+            hasTextLayer = layerType == LayerType.TEXT || layerType == LayerType.SYMBOL,
+            textField = textField
+        )
+    }
+    
+    /**
      * 파일명으로 PMTiles 설정을 찾는 함수
+     * 기존 설정이 있으면 우선 사용하고, 없으면 파일명 규칙에 따라 자동 생성
      */
     fun findConfigByFileName(fileName: String): PMTilesConfig? {
-        return pmtilesConfigs.find { it.fileName == fileName }
+        // 1. 기존 설정에서 찾기 (우선순위 1)
+        pmtilesConfigs.find { it.fileName == fileName }?.let { 
+            return it
+        }
+        
+        // 2. 없으면 파일명 규칙에 따라 자동 생성
+        android.util.Log.d("[PMTilesManager]", "설정이 없어 파일명 규칙으로 자동 생성: $fileName")
+        return createDefaultConfigFromFileName(fileName)
     }
     
     /**

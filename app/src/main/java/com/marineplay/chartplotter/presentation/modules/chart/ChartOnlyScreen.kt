@@ -80,6 +80,9 @@ fun ChartOnlyScreen(
     var locationManager by remember { mutableStateOf<LocationManager?>(null) }
     var isMapStyleLoaded by remember { mutableStateOf(false) }
     
+    // 화면 진입 카운터 (화면 재진입 감지용)
+    var screenEntryKey by remember { mutableStateOf(0) }
+    
     // Coroutine scope
     val coroutineScope = rememberCoroutineScope()
     
@@ -97,6 +100,9 @@ fun ChartOnlyScreen(
     
     // AIS Overlay 생성
     val aisOverlay = remember { com.marineplay.chartplotter.presentation.modules.chart.overlays.AISOverlay() }
+    
+    // ✅ AIS Overlay 시작 플래그 (초기화 완료 체크용)
+    var aisOverlayStarted by remember { mutableStateOf(false) }
 
     // MainActivity에 mapLibreMap과 locationManager 전달
     LaunchedEffect(mapLibreMap) {
@@ -112,27 +118,162 @@ fun ChartOnlyScreen(
         aisViewModel.connect()
     }
     
-    // AIS Overlay 시작 (지도 스타일 로드 후)
-    LaunchedEffect(mapLibreMap, isMapStyleLoaded) {
-        if (isMapStyleLoaded) {
+    // 화면 진입 시마다 모든 오버레이와 레이어 재생성
+    // mapLibreMap이 null이 아니고 isMapStyleLoaded가 false일 때 재초기화
+    LaunchedEffect(mapLibreMap, isMapStyleLoaded, screenEntryKey) {
+        if (mapLibreMap != null && !isMapStyleLoaded) {
             mapLibreMap?.let { map ->
-                aisOverlay.start(map)
+                Log.d("[ChartOnlyScreen]", "화면 진입/재진입 - 모든 오버레이 및 레이어 재초기화 시작")
+                
+                val mapUiState = viewModel.mapUiState
+                
+                // 지도 스타일을 명시적으로 다시 로드하여 재초기화
+                map.getStyle { style ->
+                    isMapStyleLoaded = true
+                    
+                    // 선박 아이콘과 포인트 레이어 재추가
+                    locationManager?.addShipToMap(style)
+                    locationManager?.addPointsToMap(style)
+                    
+                    // 항해 경로 재생성 (navigationPoint가 있으면)
+                    // 위치 정보가 없어도 목적지 마커는 먼저 표시
+                    if (mapUiState.navigationPoint != null) {
+                        // 목적지 마커는 위치 정보와 무관하게 먼저 표시
+                        val navigationLatLng = LatLng(
+                            mapUiState.navigationPoint.latitude,
+                            mapUiState.navigationPoint.longitude
+                        )
+                        PMTilesLoader.addNavigationMarker(
+                            map,
+                            navigationLatLng,
+                            mapUiState.navigationPoint.name
+                        )
+                        
+                        // 위치 정보가 있으면 항해 경로도 그리기
+                        if (locationManager?.getCurrentLocationObject() != null) {
+                            updateNavigationRouteUseCase.execute(
+                                map,
+                                locationManager?.getCurrentLocationObject(),
+                                mapUiState.waypoints,
+                                mapUiState.navigationPoint
+                            )
+                            Log.d("[ChartOnlyScreen]", "항해 경로 및 목적지 마커 재생성")
+                        } else {
+                            Log.d("[ChartOnlyScreen]", "목적지 마커 표시 (위치 정보 대기 중, GPS 수신 시 경로 자동 생성)")
+                        }
+                    }
+                    
+                    // AIS Overlay 재시작 (coroutineScope 내에서 delay 호출)
+                    aisOverlay.stop()
+                    aisOverlayStarted = false // ✅ 시작 플래그 리셋
+                    Log.d("[ChartOnlyScreen]", "AIS Overlay 시작 준비: aisOverlayStarted=false로 리셋")
+                    coroutineScope.launch {
+                        delay(100)
+                        // ✅ 초기 선박 데이터를 start()에 전달하여 스타일 로드 후 자동 업데이트
+                        Log.d("[ChartOnlyScreen]", "AIS Overlay start() 호출: ${aisVessels.size}개 선박")
+                        aisOverlay.start(map, aisVessels)
+                        aisOverlayStarted = true // ✅ 시작 플래그 설정
+                        Log.d("[ChartOnlyScreen]", "✅ AIS Overlay start() 완료: aisOverlayStarted=true로 설정")
+                    }
+                    
+                    Log.d("[ChartOnlyScreen]", "화면 진입/재진입 - 모든 오버레이 및 레이어 재초기화 완료")
+                }
+            }
+        }
+    }
+    
+    // ✅ AIS Overlay 시작: isMapStyleLoaded가 true이고 aisOverlayStarted가 false일 때 시작
+    LaunchedEffect(mapLibreMap, isMapStyleLoaded, aisOverlayStarted) {
+        if (mapLibreMap != null && isMapStyleLoaded && !aisOverlayStarted) {
+            mapLibreMap?.let { map ->
+                Log.d("[ChartOnlyScreen]", "🚀 AIS Overlay 자동 시작: isMapStyleLoaded=true, aisOverlayStarted=false")
+                aisOverlay.stop()
+                coroutineScope.launch {
+                    delay(100)
+                    Log.d("[ChartOnlyScreen]", "AIS Overlay start() 호출: ${aisVessels.size}개 선박")
+                    aisOverlay.start(map, aisVessels)
+                    aisOverlayStarted = true
+                    Log.d("[ChartOnlyScreen]", "✅ AIS Overlay start() 완료: aisOverlayStarted=true로 설정")
+                }
             }
         }
     }
     
     // AIS 선박 데이터가 업데이트되면 overlay에 반영
-    LaunchedEffect(aisVessels, isMapStyleLoaded) {
-        if (isMapStyleLoaded) {
-            android.util.Log.d("[ChartOnlyScreen]", "AIS 선박 업데이트 시도: ${aisVessels.size}개, 위치 있는 선박: ${aisVessels.count { it.latitude != null && it.longitude != null }}개")
+    // ✅ 스로틀링: 500ms에 한 번만 업데이트
+    // ✅ isMapStyleLoaded가 true이고, start()가 호출된 후에만 업데이트
+    var lastAisUpdateTime by remember { mutableStateOf(0L) }
+    
+    LaunchedEffect(aisVessels, isMapStyleLoaded, aisOverlayStarted) {
+        // ✅ 디버깅: 조건 체크
+        Log.d("[ChartOnlyScreen]", "LaunchedEffect 트리거: aisVessels=${aisVessels.size}개, isMapStyleLoaded=$isMapStyleLoaded, aisOverlayStarted=$aisOverlayStarted")
+        
+        // ✅ 스타일이 로드되고 AIS Overlay가 시작된 후에만 업데이트
+        if (isMapStyleLoaded && aisOverlayStarted) {
+            val now = System.currentTimeMillis()
+            // ✅ 스로틀링: 500ms에 한 번만
+            if (now - lastAisUpdateTime < 500) {
+                Log.d("[ChartOnlyScreen]", "스로틀링으로 스킵: ${now - lastAisUpdateTime}ms 경과")
+                return@LaunchedEffect
+            }
+            
+            android.util.Log.d("[ChartOnlyScreen]", "✅ AIS 선박 업데이트 시도: ${aisVessels.size}개, 위치 있는 선박: ${aisVessels.count { it.latitude != null && it.longitude != null }}개")
             aisOverlay.updateVessels(aisVessels)
+            lastAisUpdateTime = now
+        } else {
+            Log.d("[ChartOnlyScreen]", "조건 미충족으로 스킵: isMapStyleLoaded=$isMapStyleLoaded, aisOverlayStarted=$aisOverlayStarted")
         }
     }
     
-    // 컴포저블 해제 시 overlay 정리
+    // 위치 업데이트 시작 (지도가 준비되면 즉시 시작, 스타일 로드와 무관)
+    // 지도 렌더링과 위치 추적을 분리하여 지도가 먼저 표시되도록 함
+    LaunchedEffect(locationManager) {
+        if (locationManager != null) {
+            // 위치 권한 확인 및 요청
+            if (ContextCompat.checkSelfPermission(
+                    activity,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                    activity,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                locationManager?.startLocationUpdates()
+                Log.d("[ChartOnlyScreen]", "위치 추적 시작 (지도 준비 완료, 스타일 로드와 무관)")
+            } else {
+                // MainActivity의 권한 요청 메서드 호출
+                if (activity is MainActivity) {
+                    (activity as MainActivity).requestLocationPermission()
+                    Log.d("[ChartOnlyScreen]", "위치 권한 요청")
+                }
+            }
+        }
+    }
+    
+    // mapLibreMap이 null이 되면 isMapStyleLoaded도 리셋
+    LaunchedEffect(mapLibreMap) {
+        if (mapLibreMap == null) {
+            isMapStyleLoaded = false
+            Log.d("[ChartOnlyScreen]", "mapLibreMap이 null이 되어 isMapStyleLoaded 리셋")
+        }
+    }
+    
+    // 컴포저블 해제 시 정리 및 재진입 감지
     DisposableEffect(Unit) {
+        // 화면 진입 시 카운터 증가하여 재초기화 트리거
+        screenEntryKey++
+        isMapStyleLoaded = false
+        Log.d("[ChartOnlyScreen]", "화면 진입 감지 (key=$screenEntryKey) - isMapStyleLoaded 리셋하여 재초기화 트리거")
+        
         onDispose {
+            // 위치 업데이트 중지
+            locationManager?.stopLocationUpdates()
+            // AIS Overlay 정리
             aisOverlay.stop()
+            // 상태 리셋 (다음 진입 시 재로드 보장)
+            isMapStyleLoaded = false
+            Log.d("[ChartOnlyScreen]", "화면 해제 - 위치 추적 및 Overlay 중지, 상태 리셋")
         }
     }
 
@@ -1507,12 +1648,22 @@ fun ChartOnlyScreen(
                     .build()
 
                 map.setLatLngBoundsForCameraTarget(regionBounds)
-                if (!mapUiState.isMapInitialized) {
+                
+                // mapLibreMap 설정 시마다 isMapStyleLoaded 리셋하여 재초기화 보장
+                val isFirstInit = !mapUiState.isMapInitialized
+                if (isFirstInit) {
                     mapLibreMap = map
                     viewModel.updateIsMapInitialized(true)
-                    locationManager = LocationManager(
-                        activity,
-                        map,
+                } else {
+                    // 화면 재진입 시 상태 리셋하여 재초기화 트리거
+                    isMapStyleLoaded = false
+                    mapLibreMap = map
+                    Log.d("[ChartOnlyScreen]", "화면 재진입 감지 - isMapStyleLoaded 리셋하여 재초기화 트리거")
+                }
+                
+                locationManager = LocationManager(
+                    activity,
+                    map,
                         onGpsLocationUpdate = { lat, lng, available ->
                             viewModel.updateGpsLocation(lat, lng, available)
                             
@@ -1599,13 +1750,62 @@ fun ChartOnlyScreen(
                     // PMTiles 로드 후 선박 아이콘과 포인트 마커 추가를 위해 스타일 로드 완료를 기다림
                     // 스타일 로드는 비동기로 처리하여 UI 블로킹 방지
                     map.getStyle { style ->
+                        val wasAlreadyLoaded = isMapStyleLoaded
                         isMapStyleLoaded = true
                         
                         // 지도 조작은 반드시 메인 스레드에서 수행 (MapLibre 요구사항)
                         // 선박 아이콘과 포인트 레이어 추가 (메인 스레드)
+                        // 화면 전환 후 재진입 시에도 다시 추가되도록 항상 실행
                         locationManager?.addShipToMap(style)
                         locationManager?.addPointsToMap(style)
                         // AIS 선박은 AISOverlay에서 처리
+                        
+                        // 화면 재진입 시 항해 경로 재생성 (wasAlreadyLoaded가 true면 재진입)
+                        if (wasAlreadyLoaded) {
+                            Log.d("[ChartOnlyScreen]", "지도 스타일 재로드 감지 - 모든 레이어 재추가 시작")
+                            
+                            val mapUiState = viewModel.mapUiState
+                            
+                            // 항해 경로 재생성 (navigationPoint가 있으면)
+                            // 위치 정보가 없어도 목적지 마커는 먼저 표시
+                            if (mapUiState.navigationPoint != null) {
+                                // 목적지 마커는 위치 정보와 무관하게 먼저 표시
+                                val navigationLatLng = LatLng(
+                                    mapUiState.navigationPoint.latitude,
+                                    mapUiState.navigationPoint.longitude
+                                )
+                                PMTilesLoader.addNavigationMarker(
+                                    map,
+                                    navigationLatLng,
+                                    mapUiState.navigationPoint.name
+                                )
+                                
+                                // 위치 정보가 있으면 항해 경로도 그리기
+                                if (locationManager?.getCurrentLocationObject() != null) {
+                                    updateNavigationRouteUseCase.execute(
+                                        map,
+                                        locationManager?.getCurrentLocationObject(),
+                                        mapUiState.waypoints,
+                                        mapUiState.navigationPoint
+                                    )
+                                    Log.d("[ChartOnlyScreen]", "항해 경로 및 목적지 마커 재생성 완료")
+                                } else {
+                                    Log.d("[ChartOnlyScreen]", "목적지 마커 표시 (위치 정보 대기 중, GPS 수신 시 경로 자동 생성)")
+                                }
+                            }
+                            
+                            // AIS Overlay 재시작 (coroutineScope 내에서 delay 호출)
+                            aisOverlay.stop()
+                            aisOverlayStarted = false // ✅ 시작 플래그 리셋
+                            coroutineScope.launch {
+                                delay(100)
+                                // ✅ 초기 선박 데이터를 start()에 전달하여 스타일 로드 후 자동 업데이트
+                                aisOverlay.start(map, aisVessels)
+                                aisOverlayStarted = true // ✅ 시작 플래그 설정
+                            }
+                            
+                            Log.d("[ChartOnlyScreen]", "지도 스타일 재로드 - 모든 레이어 재추가 완료")
+                        }
                         
                         // 포인트 데이터 로드만 백그라운드에서 처리
                         coroutineScope.launch(Dispatchers.IO) {
@@ -1734,32 +1934,8 @@ fun ChartOnlyScreen(
                         }
                     }
 
-
-                    // 위치 권한 확인 및 요청
-                    if (ContextCompat.checkSelfPermission(
-                            activity,
-                            Manifest.permission.ACCESS_FINE_LOCATION
-                        ) == PackageManager.PERMISSION_GRANTED ||
-                        ContextCompat.checkSelfPermission(
-                            activity,
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        ) == PackageManager.PERMISSION_GRANTED
-                    ) {
-                        locationManager?.startLocationUpdates()
-                        // 첫 번째 위치 정보를 받으면 자동으로 그 위치로 이동 (onLocationChanged에서 처리)
-                        Log.d("[ChartPlotterScreen]", "위치 추적 시작 - 첫 번째 위치에서 자동 이동")
-                    } else {
-                        // MainActivity의 권한 요청 메서드 호출
-                        if (activity is MainActivity) {
-                            (activity as MainActivity).requestLocationPermission()
-                            Log.d("[ChartPlotterScreen]", "위치 권한 요청")
-                        } else {
-                            Log.w("[ChartPlotterScreen]", "위치 권한이 없습니다. MainActivity에서 권한을 요청해야 합니다.")
-                        }
-                    }
-
+                    // 위치 업데이트는 LaunchedEffect에서 처리 (화면 재진입 시 자동 재시작)
                 }
-            }
         )
 
         // 우측 상단 메뉴 버튼은 MapControls로 이동됨 (제거됨)

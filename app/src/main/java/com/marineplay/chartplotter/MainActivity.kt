@@ -623,14 +623,23 @@ class MainActivity : ComponentActivity() {
                     activity = this@MainActivity,
                     onMapLibreMapChange = { map ->
                         mapLibreMap = map
-                        // map이 잡히는 순간 1회만 오버레이 시작
-                        if (map != null && tidalCurrentOverlay == null) {
-                            tidalCurrentOverlay = TidalCurrentOverlay(
-                                context = this@MainActivity,
-                                scope = tidalOverlayScope,
-                                assetCsvPath = "current_2026-01-20_grid9_zoomranges_35.135736_129.069886_1min.csv",
-                                defaultCenter = LatLng(35.135736, 129.069886)
-                            ).also { it.start(map) }
+                        // ✅ Map 완전히 뜬 뒤에 Overlay 시작 (스타일 완전 로드 후)
+                        if (map != null) {
+                            // 기존 오버레이가 있으면 중지 후 재시작
+                            tidalCurrentOverlay?.stop()
+                            
+                            // 스타일이 완전히 로드된 후 Overlay 시작
+                            map.getStyle { style ->
+                                tidalCurrentOverlay = TidalCurrentOverlay(
+                                    context = this@MainActivity,
+                                    scope = tidalOverlayScope,
+                                    assetCsvPath = "current_2026-01-20_grid9_zoomranges_35.135736_129.069886_1min.csv",
+                                    defaultCenter = LatLng(35.135736, 129.069886)
+                                ).also { 
+                                    it.start(map)
+                                    Log.d("[MainActivity]", "조류 Overlay 시작/재시작 (스타일 로드 완료 후)")
+                                }
+                            }
                         }
                     },
                     onLocationManagerChange = { locationManager = it }
