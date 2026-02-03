@@ -57,6 +57,18 @@ class TidalCurrentOverlay(
     }
     private var csvLoaded = false
     private val speedFormat = DecimalFormat("0.0")
+    
+    // ✅ 변경 감지 최적화: 같은 상태면 업데이트 스킵
+    private var lastMinute: Int = -1
+    private var lastZoom: Float = -1f
+    private var lastBounds: Bounds? = null
+    
+    // ✅ 스로틀링: 500ms에 한 번만 업데이트
+    private var lastUpdateTime = 0L
+    private val updateThrottleMs = 500L
+    
+    // ✅ String 캐싱: 속도 레이블 반복 생성 방지
+    private val speedLabelCache = mutableMapOf<Double, String>()
 
     data class PointRow(
         val lat: Double,
@@ -88,12 +100,20 @@ class TidalCurrentOverlay(
                 if (!csvLoaded) {
                     scope.launch(Dispatchers.IO) {
                         try {
+                            Log.d("[TidalCurrentOverlay]", "CSV 로딩 시작: $assetCsvPath")
+                            val startTime = System.currentTimeMillis()
+                            
                             // 백그라운드에서 로딩
                             pointsByMinute.size // lazy 초기화
                             csvLoaded = true
                             
+                            val loadTime = System.currentTimeMillis() - startTime
+                            Log.d("[TidalCurrentOverlay]", "✅ CSV 로딩 완료: ${loadTime}ms")
+                            
                             withContext(Dispatchers.Main) {
+                                // ✅ 로딩 완료 후 즉시 업데이트
                                 updateForView(map)
+                                
                                 // 이후 1분마다 갱신
                                 job = scope.launch {
                                     while (isActive) {
@@ -107,6 +127,7 @@ class TidalCurrentOverlay(
                         }
                     }
                 } else {
+                    // ✅ 이미 로딩된 경우 즉시 업데이트
                     updateForView(map)
                     job = scope.launch {
                         while (isActive) {
@@ -138,6 +159,13 @@ class TidalCurrentOverlay(
         mapRef?.removeOnCameraIdleListener(cameraIdleListener)
         cameraListenerRegistered = false
         mapRef = null
+        
+        // ✅ 상태 리셋
+        lastMinute = -1
+        lastZoom = -1f
+        lastBounds = null
+        lastUpdateTime = 0L
+        speedLabelCache.clear()
     }
 
     private val cameraIdleListener = MapLibreMap.OnCameraIdleListener {
@@ -203,18 +231,28 @@ class TidalCurrentOverlay(
     /**
      * ✅ 현재 카메라의 visible bounds 안에서만 조류를 생성/표시.
      * ✅ 줌 레벨에 따라 샘플링 간격을 조절해서 "줌 낮으면 대표 몇 개, 줌 높으면 촘촘히" 구현.
+     * ✅ 변경 감지 및 스로틀링으로 불필요한 업데이트 방지.
      */
     private fun updateForView(map: MapLibreMap) {
         // ✅ CSV 로딩 안 됐으면 스킵
         if (!csvLoaded) return
         
+        val now = System.currentTimeMillis()
+        val isInitialUpdate = lastMinute == -1 || lastUpdateTime == 0L
+        
+        // ✅ 1. 스로틀링 체크: 500ms에 한 번만 업데이트 (초기 업데이트는 제외)
+        if (!isInitialUpdate && now - lastUpdateTime < updateThrottleMs) {
+            return
+        }
+        
         val minute = nowMinuteOfDay()
         val points = pointsByMinute.getOrNull(minute) ?: return
 
         val zoom = map.cameraPosition.zoom.toFloat()
+        
         // ✅ LatLngBounds 필드명 차이(MapLibre/Mapbox 버전 차이)로 인한 컴파일 이슈 방지:
         // visibleRegion의 4 코너로 직접 min/max bounds를 계산한다.
-        val (latSouth, latNorth, lonWest, lonEast) = try {
+        val currentBounds = try {
             val vr = map.projection.visibleRegion
             val corners = listOf(vr.farLeft, vr.farRight, vr.nearLeft, vr.nearRight).filterNotNull()
             if (corners.isEmpty()) {
@@ -239,7 +277,36 @@ class TidalCurrentOverlay(
                 defaultCenter.longitude + 0.05
             )
         }
+        
+        // ✅ 2. 변경 감지: 같은 상태(시간/줌/범위)면 업데이트 스킵 (초기 업데이트는 제외)
+        var boundsChanged = true
+        var zoomChanged = true
+        
+        if (!isInitialUpdate) {
+            // 소수점 4자리로 비교하여 미세한 변화 무시 (약 10m 이내)
+            boundsChanged = lastBounds?.let { prev ->
+                kotlin.math.abs(prev.latSouth - currentBounds.latSouth) > 0.0001 ||
+                kotlin.math.abs(prev.latNorth - currentBounds.latNorth) > 0.0001 ||
+                kotlin.math.abs(prev.lonWest - currentBounds.lonWest) > 0.0001 ||
+                kotlin.math.abs(prev.lonEast - currentBounds.lonEast) > 0.0001
+            } ?: true
+            
+            zoomChanged = kotlin.math.abs(lastZoom - zoom) > 0.1f // 0.1 줌 단위로 비교
+            
+            if (lastMinute == minute && !boundsChanged && !zoomChanged) {
+                // ✅ 완전히 동일한 상태면 업데이트 스킵 (Feature 생성 자체를 방지)
+                Log.d("[TidalCurrentOverlay]", "변경 없음 스킵: minute=$minute, zoom=$zoom")
+                return
+            }
+        }
+        
+        // ✅ 상태 업데이트
+        lastMinute = minute
+        lastZoom = zoom
+        lastBounds = currentBounds
+        lastUpdateTime = now
 
+        val (latSouth, latNorth, lonWest, lonEast) = currentBounds
         val maxFeatures = 3000
         val features = ArrayList<Feature>(minOf(maxFeatures, points.size))
 
@@ -250,9 +317,14 @@ class TidalCurrentOverlay(
             if (p.lat < latSouth || p.lat > latNorth) continue
             if (p.lon < lonWest || p.lon > lonEast) continue
 
+            // ✅ String 캐싱: 속도 레이블 반복 생성 방지
+            val speedLabel = speedLabelCache.getOrPut(p.speedKnots) {
+                "${speedFormat.format(p.speedKnots)}kt"
+            }
+
             val f = Feature.fromGeometry(Point.fromLngLat(p.lon, p.lat)).also {
                 it.addNumberProperty("direction", p.directionDeg)
-                it.addStringProperty("speedLabel", "${speedFormat.format(p.speedKnots)}kt")
+                it.addStringProperty("speedLabel", speedLabel)
             }
             features.add(f)
             if (features.size >= maxFeatures) break
@@ -261,7 +333,7 @@ class TidalCurrentOverlay(
         geoJsonSource?.setGeoJson(FeatureCollection.fromFeatures(features))
         Log.d(
             "[TidalCurrentOverlay]",
-            "update zoom=$zoom minute=$minute features=${features.size}"
+            "✅ update zoom=$zoom minute=$minute features=${features.size} (변경: minute=${lastMinute != minute}, zoom=$zoomChanged, bounds=$boundsChanged)"
         )
     }
 

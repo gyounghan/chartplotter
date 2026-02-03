@@ -41,8 +41,11 @@ class AISOverlay {
     private var mapRef: MapLibreMap? = null
     private var styleRef: Style? = null
     
-    // 이전 Feature 캐시 (MMSI -> Feature)
-    private val previousFeatures = mutableMapOf<String, Feature>()
+    // ✅ Feature 캐시 (MMSI -> Feature) - 최초 1회 생성 후 재사용
+    private val featureCache = mutableMapOf<String, Feature>()
+    
+    // ✅ 이전 좌표 캐시 (MMSI -> Pair<lat, lon>) - Geometry 재생성 최소화를 위해
+    private val previousCoordinates = mutableMapOf<String, Pair<Double, Double>>()
     
     // ✅ 스로틀링: 500ms에 한 번만 업데이트
     private var lastUpdateTime = 0L
@@ -51,9 +54,15 @@ class AISOverlay {
     // ✅ Bitmap 캐시
     private var cachedTriangleBitmap: Bitmap? = null
     
+    // ✅ Path 캐시 (재사용을 위해 클래스 멤버로)
+    private val trianglePath = Path()
+    
     // ✅ 초기화 완료 플래그
     @Volatile
     private var isInitialized = false
+    
+    // ✅ 최초 FeatureCollection 설정 여부
+    private var initialFeaturesSet = false
     
     /**
      * Overlay 시작 (지도 스타일이 로드된 후 호출)
@@ -144,7 +153,9 @@ class AISOverlay {
         labelLayer = null
         mapRef = null
         styleRef = null
-        previousFeatures.clear()
+        featureCache.clear()
+        previousCoordinates.clear()
+        initialFeaturesSet = false
         isInitialized = false // ✅ 초기화 플래그 리셋
     }
     
@@ -222,93 +233,87 @@ class AISOverlay {
             // 현재 선박들의 MMSI 집합
             val currentMmsis = validVessels.map { it.mmsi }.toSet()
             
-            // 변경된 선박만 감지
-            val updatedFeatures = mutableMapOf<String, Feature>()
+            // ✅ 변경된 선박만 감지하여 Feature 업데이트 (Geometry 재생성 최소화)
             var hasChanges = false
             var changedCount = 0
+            var newCount = 0
+            var reusedCount = 0
             
             validVessels.forEach { vessel ->
                 val lat = vessel.displayLatitude ?: vessel.latitude
                 val lon = vessel.displayLongitude ?: vessel.longitude
                 
                 if (lat != null && lon != null) {
-                    val previousFeature = previousFeatures[vessel.mmsi]
+                    val mmsi = vessel.mmsi
+                    val previousCoords = previousCoordinates[mmsi]
                     
-                    // 좌표가 변경되었는지 확인
-                    val coordinatesChanged = if (previousFeature != null) {
-                        val prevPoint = previousFeature.geometry() as? Point
-                        if (prevPoint != null) {
-                            val coordinates = prevPoint.coordinates()
-                            // Point.coordinates()는 [longitude, latitude] 리스트 반환
-                            if (coordinates.size >= 2) {
-                                val prevLon = coordinates[0]
-                                val prevLat = coordinates[1]
-                                // 소수점 6자리로 반올림하여 비교 (미세한 변화 무시)
-                                val lonDiff = kotlin.math.abs(prevLon - lon)
-                                val latDiff = kotlin.math.abs(prevLat - lat)
-                                lonDiff > 0.000001 || latDiff > 0.000001
-                            } else {
-                                true
-                            }
-                        } else {
-                            true
-                        }
+                    // ✅ 좌표 변경 확인 (더 정확한 비교로 불필요한 재생성 방지)
+                    val coordinatesChanged = if (previousCoords != null) {
+                        val (prevLat, prevLon) = previousCoords
+                        // 소수점 5자리로 반올림하여 비교 (약 1m 이내 변화 무시)
+                        val latDiff = kotlin.math.abs(prevLat - lat)
+                        val lonDiff = kotlin.math.abs(prevLon - lon)
+                        latDiff > 0.00001 || lonDiff > 0.00001
                     } else {
                         true // 새 선박
                     }
                     
                     if (coordinatesChanged) {
-                        // 변경된 선박만 새 Feature 생성
+                        // ✅ 변경된 선박만 새 Feature 생성 (Geometry 재생성)
                         val geometry = Point.fromLngLat(lon, lat)
                         val newFeature = Feature.fromGeometry(geometry).apply {
                             addStringProperty("id", vessel.id)
                             addStringProperty("name", vessel.name)
-                            addStringProperty("mmsi", vessel.mmsi)
-                            // 삼각형 회전을 위한 course 추가
+                            addStringProperty("mmsi", mmsi) // MMSI를 id로 사용 (Feature-State 대신 property로)
                             addNumberProperty("course", vessel.course.toDouble())
                         }
-                        updatedFeatures[vessel.mmsi] = newFeature
+                        featureCache[mmsi] = newFeature
+                        previousCoordinates[mmsi] = Pair(lat, lon)
                         hasChanges = true
-                        changedCount++
+                        if (previousCoords == null) {
+                            newCount++
+                        } else {
+                            changedCount++
+                        }
                     } else {
-                        // 변경 없으면 이전 Feature 재사용
-                        previousFeature?.let { updatedFeatures[vessel.mmsi] = it }
+                        // ✅ 변경 없으면 기존 Feature 재사용 (Geometry 재생성 안 함)
+                        // course만 업데이트해야 하는 경우도 있지만, Geometry 재생성은 피함
+                        reusedCount++
                     }
                 }
             }
             
-            // 제거된 선박 처리
-            val removedMmsis = previousFeatures.keys - currentMmsis
+            // ✅ 제거된 선박 처리
+            val removedMmsis = featureCache.keys - currentMmsis
             val removedCount = removedMmsis.size
             if (removedMmsis.isNotEmpty()) {
                 removedMmsis.forEach { mmsi ->
-                    previousFeatures.remove(mmsi)
+                    featureCache.remove(mmsi)
+                    previousCoordinates.remove(mmsi)
                 }
                 hasChanges = true
             }
             
-            // 변경사항이 있거나 첫 업데이트인 경우에만 지도 업데이트
-            if (hasChanges || previousFeatures.isEmpty()) {
-                val finalFeatures = updatedFeatures.values.toList()
+            // ✅ 변경사항이 있거나 첫 업데이트인 경우에만 지도 업데이트
+            if (hasChanges || !initialFeaturesSet) {
+                val finalFeatures = featureCache.values.toList()
                 
-                Log.d("[AISOverlay]", "지도 업데이트 준비: ${finalFeatures.size}개 Feature (변경: ${changedCount}개, 제거: ${removedCount}개, hasChanges: $hasChanges)")
+                Log.d("[AISOverlay]", "지도 업데이트 준비: ${finalFeatures.size}개 Feature (신규: ${newCount}개, 변경: ${changedCount}개, 재사용: ${reusedCount}개, 제거: ${removedCount}개)")
                 
                 if (finalFeatures.isNotEmpty()) {
                     geoJsonSource?.setGeoJson(FeatureCollection.fromFeatures(finalFeatures))
-                    lastUpdateTime = now // ✅ 업데이트 시간 기록
-                    Log.d("[AISOverlay]", "✅ AIS 선박 지도 업데이트 완료: 총 ${finalFeatures.size}개 (변경: ${changedCount}개, 제거: ${removedCount}개)")
+                    lastUpdateTime = now
+                    initialFeaturesSet = true
+                    Log.d("[AISOverlay]", "✅ AIS 선박 지도 업데이트 완료: 총 ${finalFeatures.size}개 (신규: ${newCount}개, 변경: ${changedCount}개, 재사용: ${reusedCount}개, 제거: ${removedCount}개)")
                 } else {
                     geoJsonSource?.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
                     lastUpdateTime = now
+                    initialFeaturesSet = false
                     Log.d("[AISOverlay]", "AIS 선박 모두 제거됨")
                 }
-                
-                // 캐시 업데이트
-                previousFeatures.clear()
-                previousFeatures.putAll(updatedFeatures)
             } else {
-                // 변경사항 없음 (로그만 출력, 지도 업데이트 스킵)
-                Log.d("[AISOverlay]", "AIS 선박 변경사항 없음 (${validVessels.size}개 유지, 지도 업데이트 스킵)")
+                // ✅ 변경사항 없음 (로그만 출력, 지도 업데이트 스킵)
+                Log.d("[AISOverlay]", "AIS 선박 변경사항 없음 (${validVessels.size}개 유지, 재사용: ${reusedCount}개, 지도 업데이트 스킵)")
             }
         } catch (e: Exception) {
             Log.e("[AISOverlay]", "AIS 선박 업데이트 실패: ${e.message}", e)
@@ -446,16 +451,15 @@ class AISOverlay {
         val leftX = centerX - baseWidth / 2f
         val rightX = centerX + baseWidth / 2f
         
-        // 북쪽을 향하는 삼각형 경로 생성
-        val path = Path().apply {
-            moveTo(centerX, topY) // 위쪽 꼭짓점 (북쪽)
-            lineTo(leftX, bottomY) // 왼쪽 아래
-            lineTo(rightX, bottomY) // 오른쪽 아래
-            close()
-        }
+        // ✅ Path 재사용 (새로 만들지 말고 reset만)
+        trianglePath.reset()
+        trianglePath.moveTo(centerX, topY) // 위쪽 꼭짓점 (북쪽)
+        trianglePath.lineTo(leftX, bottomY) // 왼쪽 아래
+        trianglePath.lineTo(rightX, bottomY) // 오른쪽 아래
+        trianglePath.close()
         
         // 테두리만 그리기 (속은 비어있음)
-        canvas.drawPath(path, strokePaint)
+        canvas.drawPath(trianglePath, strokePaint)
         
         return bitmap
     }
