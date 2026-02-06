@@ -953,6 +953,158 @@ object PMTilesLoader {
     /**
      * 항해 선을 제거합니다
      */
+    /**
+     * 경로를 지도에 표시
+     */
+    fun addRouteLine(map: MapLibreMap, routeId: String, points: List<org.maplibre.android.geometry.LatLng>, color: Int = android.graphics.Color.GREEN) {
+        map.getStyle { style ->
+            try {
+                // 기존 경로 선 제거
+                removeRouteLine(map, routeId)
+                
+                if (points.size < 2) return@getStyle
+                
+                // GeoJSON LineString 좌표 생성
+                val coordinates = points.map { "[${it.longitude}, ${it.latitude}]" }.joinToString(",\n                                    ")
+                
+                val routeLineGeoJson = """
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": [
+                                    $coordinates
+                                ]
+                            },
+                            "properties": {
+                                "name": "route_line_$routeId"
+                            }
+                        }
+                    ]
+                }
+                """.trimIndent()
+                
+                // GeoJsonSource 추가
+                val routeLineSource = GeoJsonSource("route_line_source_$routeId", routeLineGeoJson)
+                style.addSource(routeLineSource)
+                
+                // LineLayer 추가
+                val routeLineLayer = LineLayer("route_line_layer_$routeId", "route_line_source_$routeId")
+                    .withProperties(
+                        PropertyFactory.lineColor(color),
+                        PropertyFactory.lineWidth(3.0f),
+                        PropertyFactory.lineOpacity(0.8f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                    )
+                style.addLayer(routeLineLayer)
+                
+                Log.d("[PMTilesLoader]", "경로 선 추가됨: $routeId (${points.size}개 포인트)")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "경로 선 추가 실패: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 경로 점 마커 표시
+     */
+    fun addRoutePoints(map: MapLibreMap, routeId: String, points: List<org.maplibre.android.geometry.LatLng>) {
+        map.getStyle { style ->
+            try {
+                val pointSourceId = "route_points_source_$routeId"
+                val pointLayerId = "route_points_layer_$routeId"
+                
+                // 기존 점 마커 제거
+                if (style.getLayer(pointLayerId) != null) {
+                    style.removeLayer(pointLayerId)
+                }
+                if (style.getSource(pointSourceId) != null) {
+                    style.removeSource(pointSourceId)
+                }
+                
+                if (points.isEmpty()) return@getStyle
+                
+                // 점 마커용 GeoJSON 생성
+                val pointFeatures = points.mapIndexed { index, point ->
+                    """
+                    {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [${point.longitude}, ${point.latitude}]
+                        },
+                        "properties": {
+                            "index": $index
+                        }
+                    }
+                    """.trimIndent()
+                }
+                
+                val pointGeoJson = """
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        ${pointFeatures.joinToString(",\n                        ")}
+                    ]
+                }
+                """.trimIndent()
+                
+                // GeoJsonSource 추가
+                val pointSource = GeoJsonSource(pointSourceId, pointGeoJson)
+                style.addSource(pointSource)
+                
+                // CircleLayer 추가 (점 표시)
+                val pointLayer = CircleLayer(pointLayerId, pointSourceId)
+                    .withProperties(
+                        PropertyFactory.circleColor(android.graphics.Color.BLUE),
+                        PropertyFactory.circleRadius(8.0f),
+                        PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+                        PropertyFactory.circleStrokeWidth(2.0f)
+                    )
+                style.addLayer(pointLayer)
+                
+                Log.d("[PMTilesLoader]", "경로 점 마커 추가됨: $routeId (${points.size}개)")
+                
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "경로 점 마커 추가 실패: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 경로 선 제거
+     */
+    fun removeRouteLine(map: MapLibreMap, routeId: String) {
+        map.getStyle { style ->
+            try {
+                val layerId = "route_line_layer_$routeId"
+                val sourceId = "route_line_source_$routeId"
+                val pointLayerId = "route_points_layer_$routeId"
+                val pointSourceId = "route_points_source_$routeId"
+                
+                if (style.getLayer(layerId) != null) {
+                    style.removeLayer(layerId)
+                }
+                if (style.getSource(sourceId) != null) {
+                    style.removeSource(sourceId)
+                }
+                if (style.getLayer(pointLayerId) != null) {
+                    style.removeLayer(pointLayerId)
+                }
+                if (style.getSource(pointSourceId) != null) {
+                    style.removeSource(pointSourceId)
+                }
+            } catch (e: Exception) {
+                Log.e("[PMTilesLoader]", "경로 선 제거 실패: ${e.message}")
+            }
+        }
+    }
+    
     fun removeNavigationLine(map: MapLibreMap) {
         map.getStyle { style ->
             try {

@@ -12,10 +12,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.data.models.SavedPoint as DataSavedPoint
+import com.marineplay.chartplotter.data.models.Route
+import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.domain.repositories.TrackRepository
 import com.marineplay.chartplotter.domain.repositories.PointRepository
+import com.marineplay.chartplotter.domain.repositories.RouteRepository
 import com.marineplay.chartplotter.domain.usecases.*
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.data.SystemSettings
@@ -51,11 +54,15 @@ data class MapUiState(
     val cursorScreenPosition: android.graphics.PointF? = null,
     val isMapInitialized: Boolean = false,
     val showMenu: Boolean = false,
-    val currentMenu: String = "main", // "main", "point", "ais", "navigation", "track", "display"
+    val currentMenu: String = "main", // "main", "point", "ais", "navigation", "track", "display", "route"
     val isZoomInLongPressed: Boolean = false,
     val isZoomOutLongPressed: Boolean = false,
     val popupPosition: android.graphics.PointF? = null,
-    val showSettingsScreen: Boolean = false // 설정 화면 표시 여부
+    val showSettingsScreen: Boolean = false, // 설정 화면 표시 여부
+    val selectedRoute: Route? = null, // 선택된 경로
+    val isEditingRoute: Boolean = false, // 경로 편집 중
+    val editingRoutePoints: List<RoutePoint> = emptyList(), // 편집 중인 경로 포인트
+    val currentNavigationRoute: Route? = null // 현재 항해 중인 경로
 )
 
 /**
@@ -125,7 +132,8 @@ data class DialogUiState(
     val showAdvancedDialog: Boolean = false,
     val showConnectionDialog: Boolean = false,
     val showInfoDialog: Boolean = false,
-    val showTrackLimitDialog: Boolean = false // 항적 표시 제한 알림 다이얼로그
+    val showTrackLimitDialog: Boolean = false, // 항적 표시 제한 알림 다이얼로그
+    val showRouteCreateDialog: Boolean = false // 경로 생성 설명 다이얼로그
 )
 
 /**
@@ -145,9 +153,12 @@ class MainViewModel(
     private val startTrackRecordingUseCase: StartTrackRecordingUseCase,
     private val stopTrackRecordingUseCase: StopTrackRecordingUseCase,
     private val addTrackPointUseCase: AddTrackPointUseCase,
+    private val routeUseCase: RouteUseCase,
+    private val connectRouteToNavigationUseCase: ConnectRouteToNavigationUseCase,
     // Repository
     private val pointRepository: PointRepository,
     private val trackRepository: TrackRepository,
+    private val routeRepository: RouteRepository,
     private val systemSettingsReader: SystemSettingsReader
 ) : ViewModel() {
     
@@ -293,6 +304,122 @@ class MainViewModel(
     
     fun updateWaypoints(waypoints: List<SavedPoint>) {
         mapUiState = mapUiState.copy(waypoints = waypoints)
+    }
+    
+    // ========== Route 관련 함수 ==========
+    fun getAllRoutes(): List<Route> {
+        return routeUseCase.getAllRoutes()
+    }
+    
+    fun createRoute(name: String, points: List<RoutePoint>): Route {
+        return routeUseCase.createRoute(name, points)
+    }
+    
+    fun updateRoute(route: Route) {
+        routeUseCase.updateRoute(route)
+    }
+    
+    fun deleteRoute(routeId: String) {
+        routeUseCase.deleteRoute(routeId)
+    }
+    
+    fun selectRoute(route: Route?) {
+        mapUiState = mapUiState.copy(selectedRoute = route)
+    }
+    
+    fun setEditingRoute(isEditing: Boolean) {
+        android.util.Log.d("[MainViewModel]", "setEditingRoute 호출: $isEditing")
+        mapUiState = mapUiState.copy(isEditingRoute = isEditing)
+        android.util.Log.d("[MainViewModel]", "상태 업데이트 완료: isEditingRoute=${mapUiState.isEditingRoute}")
+    }
+    
+    fun setEditingRoutePoints(points: List<RoutePoint>) {
+        mapUiState = mapUiState.copy(editingRoutePoints = points)
+    }
+    
+    fun addPointToEditingRoute(latitude: Double, longitude: Double, name: String = "") {
+        val currentPoints = mapUiState.editingRoutePoints.toMutableList()
+        val newPoint = RoutePoint(
+            latitude = latitude,
+            longitude = longitude,
+            order = currentPoints.size,
+            name = name
+        )
+        currentPoints.add(newPoint)
+        mapUiState = mapUiState.copy(editingRoutePoints = currentPoints)
+    }
+    
+    fun removePointFromEditingRoute(order: Int) {
+        val currentPoints = mapUiState.editingRoutePoints.toMutableList()
+        currentPoints.removeAll { it.order == order }
+        val reorderedPoints = currentPoints.mapIndexed { index, point ->
+            point.copy(order = index)
+        }
+        mapUiState = mapUiState.copy(editingRoutePoints = reorderedPoints)
+    }
+    
+    /**
+     * 경로를 항해로 지정
+     */
+    fun setRouteAsNavigation(route: Route, currentLocation: LatLng?) {
+        android.util.Log.d("[MainViewModel]", "setRouteAsNavigation 호출: route=${route.name}, currentLocation=${currentLocation?.let { "(${it.latitude}, ${it.longitude})" } ?: "null"}")
+        // 현재 위치가 있으면 가장 가까운 점부터 연결, 없으면 첫 번째 포인트부터 연결
+        if (currentLocation == null) {
+            android.util.Log.d("[MainViewModel]", "currentLocation이 null - 첫 번째 점부터 연결")
+            // 현재 위치가 없으면 경로 시작점으로 연결
+            val firstPoint = route.points.firstOrNull()
+            if (firstPoint != null) {
+                val waypoints = route.points.drop(1).dropLast(1).mapIndexed { index, routePoint ->
+                    SavedPoint(
+                        name = routePoint.name.ifEmpty { "Waypoint ${index + 1}" },
+                        latitude = routePoint.latitude,
+                        longitude = routePoint.longitude,
+                        color = Color.Blue,
+                        iconType = "circle",
+                        timestamp = System.currentTimeMillis()
+                    )
+                }
+                val destination = route.points.last().let { lastPoint ->
+                    SavedPoint(
+                        name = lastPoint.name.ifEmpty { "Destination" },
+                        latitude = lastPoint.latitude,
+                        longitude = lastPoint.longitude,
+                        color = Color.Red,
+                        iconType = "circle",
+                        timestamp = System.currentTimeMillis()
+                    )
+                }
+                mapUiState = mapUiState.copy(
+                    waypoints = waypoints,
+                    navigationPoint = destination,
+                    currentNavigationRoute = route // 현재 항해 중인 경로 저장
+                )
+            }
+        } else {
+            // 현재 위치를 기준으로 경로상의 가장 가까운 점부터 연결
+            android.util.Log.d("[MainViewModel]", "currentLocation 있음 - ConnectRouteToNavigationUseCase.execute 호출")
+            try {
+                val (waypoints, destination) = connectRouteToNavigationUseCase.execute(route, currentLocation)
+                android.util.Log.d("[MainViewModel]", "경로 연결 완료: waypoints=${waypoints.size}개, destination=${destination.name}")
+                mapUiState = mapUiState.copy(
+                    waypoints = waypoints,
+                    navigationPoint = destination,
+                    currentNavigationRoute = route // 현재 항해 중인 경로 저장
+                )
+            } catch (e: Exception) {
+                // 에러 처리
+                android.util.Log.e("[MainViewModel]", "경로 연결 실패: ${e.message}", e)
+            }
+        }
+    }
+    
+    /**
+     * 항해 중지 시 현재 항해 경로 초기화
+     */
+    fun clearNavigationRoute() {
+        mapUiState = mapUiState.copy(
+            currentNavigationRoute = null
+        )
     }
     
     fun updateShowCursor(show: Boolean) {
@@ -1250,6 +1377,10 @@ class MainViewModel(
         dialogUiState = dialogUiState.copy(showTrackLimitDialog = show)
     }
     
+    fun updateShowRouteCreateDialog(show: Boolean) {
+        dialogUiState = dialogUiState.copy(showRouteCreateDialog = show)
+    }
+    
     /**
      * 항적 기록 삭제
      */
@@ -1381,6 +1512,7 @@ class MainViewModel(
         fun provideFactory(
             pointRepository: PointRepository,
             trackRepository: TrackRepository,
+            routeRepository: RouteRepository,
             locationManager: LocationManager?,
             systemSettingsReader: SystemSettingsReader
         ): ViewModelProvider.Factory {
@@ -1399,6 +1531,8 @@ class MainViewModel(
                     val startTrackRecordingUseCase = StartTrackRecordingUseCase()
                     val stopTrackRecordingUseCase = StopTrackRecordingUseCase()
                     val addTrackPointUseCase = AddTrackPointUseCase(calculateDistanceUseCase)
+                    val routeUseCase = RouteUseCase(routeRepository)
+                    val connectRouteToNavigationUseCase = ConnectRouteToNavigationUseCase(calculateDistanceUseCase)
                     
                     return MainViewModel(
                         registerPointUseCase = registerPointUseCase,
@@ -1412,8 +1546,11 @@ class MainViewModel(
                         startTrackRecordingUseCase = startTrackRecordingUseCase,
                         stopTrackRecordingUseCase = stopTrackRecordingUseCase,
                         addTrackPointUseCase = addTrackPointUseCase,
+                        routeUseCase = routeUseCase,
+                        connectRouteToNavigationUseCase = connectRouteToNavigationUseCase,
                         pointRepository = pointRepository,
                         trackRepository = trackRepository,
+                        routeRepository = routeRepository,
                         systemSettingsReader = systemSettingsReader
                     ) as T
                 }

@@ -22,8 +22,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.*
 import com.marineplay.chartplotter.SavedPoint
+import com.marineplay.chartplotter.data.models.Route
+import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.PMTilesLoader
 import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.geometry.LatLng
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 
 /**
  * 메뉴 패널 컴포넌트
@@ -75,6 +84,7 @@ fun MenuPanel(
                                 "navigation" -> "항해"
                                 "track" -> "항적"
                                 "display" -> "화면표시"
+                                "route" -> "경로"
                                 else -> "메뉴"
                             },
                             fontSize = 20.sp,
@@ -123,7 +133,8 @@ fun MenuPanel(
                         MenuNavigationContent(
                             viewModel = viewModel,
                             mapLibreMap = mapLibreMap,
-                            loadPointsFromLocal = loadPointsFromLocal
+                            loadPointsFromLocal = loadPointsFromLocal,
+                            locationManager = locationManager
                         )
                     }
 
@@ -148,6 +159,15 @@ fun MenuPanel(
                             mapUiState = mapUiState,
                             loadPointsFromLocal = loadPointsFromLocal,
                             updateMapRotation = updateMapRotation
+                        )
+                    }
+
+                    // 경로 메뉴
+                    if (mapUiState.currentMenu == "route") {
+                        MenuRouteContent(
+                            viewModel = viewModel,
+                            mapLibreMap = mapLibreMap,
+                            locationManager = locationManager
                         )
                     }
 
@@ -198,6 +218,14 @@ private fun MenuMainContent(viewModel: MainViewModel) {
             .fillMaxWidth()
             .padding(vertical = 8.dp)
             .clickable { viewModel.updateCurrentMenu("display") },
+        color = Color.White
+    )
+    Text(
+        "경로",
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable { viewModel.updateCurrentMenu("route") },
         color = Color.White
     )
     // 고급 설정은 SystemSetting 앱에서만 제공됩니다.
@@ -272,9 +300,16 @@ private fun MenuPointContent(
 private fun MenuNavigationContent(
     viewModel: MainViewModel,
     mapLibreMap: MapLibreMap?,
-    loadPointsFromLocal: () -> List<SavedPoint>
+    loadPointsFromLocal: () -> List<SavedPoint>,
+    locationManager: LocationManager?
 ) {
     val mapUiState = viewModel.mapUiState
+    val routes = remember { mutableStateOf(viewModel.getAllRoutes()) }
+    
+    // 경로 목록 새로고침
+    LaunchedEffect(Unit) {
+        routes.value = viewModel.getAllRoutes()
+    }
     
     Text(
         "항해 시작",
@@ -291,6 +326,99 @@ private fun MenuNavigationContent(
             },
         color = Color.White
     )
+    
+    Spacer(modifier = Modifier.height(8.dp))
+    
+    Text(
+        "경로로 항해 시작",
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White,
+        modifier = Modifier.padding(vertical = 8.dp)
+    )
+    
+    if (routes.value.isEmpty()) {
+        Text(
+            "저장된 경로가 없습니다.",
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(8.dp)
+        )
+    } else {
+        LazyColumn(
+            modifier = Modifier.height(200.dp)
+        ) {
+            items(routes.value) { route ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clickable {
+                            // 실제 GPS 위치를 우선 사용, 없으면 지도 중심점 사용
+                            val currentLocation = locationManager?.getCurrentLocationObject()
+                            val currentLatLng = if (currentLocation != null) {
+                                LatLng(currentLocation.latitude, currentLocation.longitude)
+                            } else {
+                                mapLibreMap?.cameraPosition?.target
+                            }
+                            
+                            // 항해 시작: 경로상의 가장 가까운 점부터 자동 연결
+                            viewModel.setRouteAsNavigation(route, currentLatLng)
+                            
+                            // 항해 경로 업데이트
+                            mapLibreMap?.let { map ->
+                                val mapUiState = viewModel.mapUiState
+                                val waypoints = mapUiState.waypoints.map {
+                                    LatLng(it.latitude, it.longitude)
+                                }
+                                val destination = mapUiState.navigationPoint
+                                
+                                if (destination != null) {
+                                    // 실제 GPS 위치가 있으면 그것을 사용, 없으면 지도 중심점 사용
+                                    val startPoint = currentLatLng ?: map.cameraPosition.target
+                                    
+                                    if (startPoint != null) {
+                                        PMTilesLoader.addNavigationRoute(
+                                            map,
+                                            startPoint,
+                                            waypoints,
+                                            LatLng(destination.latitude, destination.longitude)
+                                        )
+                                        PMTilesLoader.addNavigationMarker(
+                                            map,
+                                            LatLng(destination.latitude, destination.longitude),
+                                            destination.name
+                                        )
+                                    }
+                                }
+                            }
+                            viewModel.updateShowMenu(false)
+                            viewModel.updateCurrentMenu("main")
+                        },
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.DarkGray.copy(alpha = 0.7f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        Text(
+                            text = route.name,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "포인트 ${route.points.size}개",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+        }
+    }
+    
+    Spacer(modifier = Modifier.height(8.dp))
     Text(
         "목적지 변경",
         modifier = Modifier
@@ -326,10 +454,12 @@ private fun MenuNavigationContent(
                 viewModel.updateCoursePoint(null)
                 viewModel.updateNavigationPoint(null)
                 viewModel.updateWaypoints(emptyList())
+                viewModel.clearNavigationRoute() // 현재 항해 경로 초기화
                 mapLibreMap?.let { map ->
                     PMTilesLoader.removeNavigationLine(map)
                     PMTilesLoader.removeNavigationMarker(map)
                 }
+                viewModel.updateShowMenu(false)
                 viewModel.updateCurrentMenu("main")
             },
         color = Color.White
@@ -482,5 +612,143 @@ private fun MenuDisplayContent(
 
 // 시스템 설정은 SystemSetting 앱에서만 제공됩니다.
 
-// 시스템 설정은 SystemSetting 앱에서만 제공됩니다.
+@Composable
+private fun MenuRouteContent(
+    viewModel: MainViewModel,
+    mapLibreMap: MapLibreMap?,
+    locationManager: LocationManager?
+) {
+    val mapUiState = viewModel.mapUiState
+    val routes = remember { mutableStateOf(viewModel.getAllRoutes()) }
+    
+    // 경로 목록 새로고침
+    LaunchedEffect(Unit) {
+        routes.value = viewModel.getAllRoutes()
+    }
+    
+    Text(
+        "경로 생성",
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable {
+                // 경로 생성 설명 다이얼로그 표시
+                viewModel.updateShowRouteCreateDialog(true)
+                viewModel.updateShowMenu(false)
+                viewModel.updateCurrentMenu("main")
+            },
+        color = Color.White
+    )
+    
+    Spacer(modifier = Modifier.height(8.dp))
+    
+    // 경로 표시 토글
+    val systemSettings = viewModel.systemSettings
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "경로 표시",
+            color = Color.White,
+            fontSize = 14.sp
+        )
+        Switch(
+            checked = systemSettings.routeVisible,
+            onCheckedChange = { viewModel.updateRouteVisible(it) }
+        )
+    }
+    
+    Spacer(modifier = Modifier.height(8.dp))
+    
+    Text(
+        "경로 목록",
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White,
+        modifier = Modifier.padding(vertical = 8.dp)
+    )
+    
+    if (routes.value.isEmpty()) {
+        Text(
+            "저장된 경로가 없습니다.",
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(8.dp)
+        )
+    } else {
+        LazyColumn(
+            modifier = Modifier.height(300.dp)
+        ) {
+            items(routes.value) { route ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.DarkGray.copy(alpha = 0.7f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        Text(
+                            text = route.name,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "포인트 ${route.points.size}개",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            // 편집
+                            IconButton(
+                                onClick = {
+                                    viewModel.selectRoute(route)
+                                    viewModel.setEditingRoute(true)
+                                    viewModel.setEditingRoutePoints(route.points)
+                                    viewModel.updateShowMenu(false)
+                                    viewModel.updateCurrentMenu("main")
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "편집",
+                                    tint = Color.Blue
+                                )
+                            }
+                            
+                            // 삭제
+                            IconButton(
+                                onClick = {
+                                    viewModel.deleteRoute(route.id)
+                                    routes.value = viewModel.getAllRoutes()
+                                    // 지도에서도 제거
+                                    mapLibreMap?.let { map ->
+                                        PMTilesLoader.removeRouteLine(map, route.id)
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "삭제",
+                                    tint = Color.Red
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 

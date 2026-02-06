@@ -8,6 +8,8 @@ import com.marineplay.chartplotter.domain.entities.Point
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.data.models.SavedPoint
+import com.marineplay.chartplotter.data.models.Route
+import com.marineplay.chartplotter.data.models.RoutePoint
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -242,6 +244,75 @@ class LocalDataSource(context: Context) {
         }
         
         return tracks
+    }
+    
+    // Route 관련 데이터 저장/로드
+    private val routePrefs: SharedPreferences = context.getSharedPreferences("route_prefs", Context.MODE_PRIVATE)
+    
+    fun saveRoutes(routes: List<Route>) {
+        val jsonArray = JSONArray()
+        routes.forEach { route ->
+            val routeJson = JSONObject().apply {
+                put("id", route.id)
+                put("name", route.name)
+                put("createdAt", route.createdAt)
+                put("updatedAt", route.updatedAt)
+                
+                val pointsArray = JSONArray()
+                route.points.forEach { point ->
+                    val pointJson = JSONObject().apply {
+                        put("latitude", point.latitude)
+                        put("longitude", point.longitude)
+                        put("order", point.order)
+                        put("name", point.name)
+                    }
+                    pointsArray.put(pointJson)
+                }
+                put("points", pointsArray)
+            }
+            jsonArray.put(routeJson)
+        }
+        routePrefs.edit().putString("routes", jsonArray.toString()).apply()
+    }
+    
+    fun loadRoutes(): List<Route> {
+        val jsonString = routePrefs.getString("routes", null) ?: return emptyList()
+        val routes = mutableListOf<Route>()
+        
+        try {
+            val jsonArray = JSONArray(jsonString)
+            for (i in 0 until jsonArray.length()) {
+                val routeJson = jsonArray.getJSONObject(i)
+                val pointsArray = routeJson.getJSONArray("points")
+                val points = mutableListOf<RoutePoint>()
+                
+                for (j in 0 until pointsArray.length()) {
+                    val pointJson = pointsArray.getJSONObject(j)
+                    points.add(
+                        RoutePoint(
+                            latitude = pointJson.getDouble("latitude"),
+                            longitude = pointJson.getDouble("longitude"),
+                            order = pointJson.getInt("order"),
+                            name = pointJson.optString("name", "")
+                        )
+                    )
+                }
+                
+                routes.add(
+                    Route(
+                        id = routeJson.getString("id"),
+                        name = routeJson.getString("name"),
+                        points = points.sortedBy { it.order },
+                        createdAt = routeJson.optLong("createdAt", System.currentTimeMillis()),
+                        updatedAt = routeJson.optLong("updatedAt", System.currentTimeMillis())
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // 로드 실패 시 빈 리스트 반환
+        }
+        
+        return routes
     }
     
 }

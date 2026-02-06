@@ -174,7 +174,7 @@ fun MapControls(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 빠른 포인트 생성 버튼 (커서가 표시될 때만 보임, 경유지 추가 모드가 아닐 때)
-                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint) {
+                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint && !mapUiState.isEditingRoute) {
                     FloatingActionButton(
                         onClick = {
                             android.util.Log.d("[MapControls]", "빠른 포인트 생성 버튼 클릭됨")
@@ -210,7 +210,7 @@ fun MapControls(
                 }
 
                 // 경유지 추가 버튼 (커서가 표시될 때만 보임, 경유지 추가 모드일 때)
-                if (mapUiState.showCursor && dialogUiState.isAddingWaypoint) {
+                if (mapUiState.showCursor && dialogUiState.isAddingWaypoint && !mapUiState.isEditingRoute) {
                     FloatingActionButton(
                         onClick = onAddWaypoint,
                         shape = RoundedCornerShape(16.dp),
@@ -254,7 +254,7 @@ fun MapControls(
                 }
 
                 // 항해 버튼 (커서가 표시될 때만 보임, 경유지 추가 모드가 아닐 때)
-                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint) {
+                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint && !mapUiState.isEditingRoute) {
                     FloatingActionButton(
                         onClick = onNavigate,
                         shape = RoundedCornerShape(16.dp),
@@ -276,25 +276,27 @@ fun MapControls(
                     }
                 }
 
-                // 메뉴 버튼
-                FloatingActionButton(
-                    onClick = onMenuClick,
-                    shape = RoundedCornerShape(16.dp),
-                    containerColor = Color(0xC6FFA500), // 주황색
-                    contentColor = Color.White,
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = 0.dp,
-                        pressedElevation = 0.dp,
-                        focusedElevation = 0.dp,
-                        hoveredElevation = 0.dp
-                    ),
-                    modifier = Modifier.size(56.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Menu,
-                        contentDescription = "Menu",
-                        modifier = Modifier.size(24.dp)
-                    )
+                if (!mapUiState.isEditingRoute) {
+                    // 메뉴 버튼
+                    FloatingActionButton(
+                        onClick = onMenuClick,
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = Color(0xC6FFA500), // 주황색
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 0.dp,
+                            pressedElevation = 0.dp,
+                            focusedElevation = 0.dp,
+                            hoveredElevation = 0.dp
+                        ),
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Menu,
+                            contentDescription = "Menu",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         }

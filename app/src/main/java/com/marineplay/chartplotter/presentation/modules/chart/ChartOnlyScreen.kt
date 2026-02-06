@@ -35,6 +35,10 @@ import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.domain.mappers.PointMapper
 import com.marineplay.chartplotter.domain.usecases.UpdateNavigationRouteUseCase
+import com.marineplay.chartplotter.domain.usecases.RouteUseCase
+import com.marineplay.chartplotter.domain.usecases.ConnectRouteToNavigationUseCase
+import com.marineplay.chartplotter.domain.usecases.CalculateDistanceUseCase
+import com.marineplay.chartplotter.PMTilesLoader
 import com.marineplay.chartplotter.presentation.utils.ChartPlotterHelpers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -56,6 +60,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.core.content.ContextCompat
 import android.Manifest
 import android.content.pm.PackageManager
@@ -1303,6 +1310,130 @@ fun ChartOnlyScreen(
         )
     }
 
+    // 경로 편집 중: 점 추가 시 지도 업데이트
+    val systemSettings = viewModel.systemSettings
+    LaunchedEffect(mapUiState.isEditingRoute, mapUiState.editingRoutePoints.size) {
+        if (mapUiState.isEditingRoute && mapLibreMap != null) {
+            val editingPoints = mapUiState.editingRoutePoints
+            if (editingPoints.isNotEmpty()) {
+                val routePoints = editingPoints.map { 
+                    org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
+                }
+                val routeId = mapUiState.selectedRoute?.id ?: "editing_route"
+                
+                // 경로 편집 중에는 항상 표시, 편집 중이 아닐 때는 routeVisible 설정 확인
+                val shouldShowRoute = mapUiState.isEditingRoute || systemSettings.routeVisible
+                
+                if (shouldShowRoute) {
+                    // 경로 선 업데이트 (2개 이상일 때만)
+                    if (editingPoints.size >= 2) {
+                        PMTilesLoader.addRouteLine(mapLibreMap!!, routeId, routePoints)
+                    }
+                    
+                    // 점 마커 표시 (모든 점, 1개일 때도 표시)
+                    PMTilesLoader.addRoutePoints(mapLibreMap!!, routeId, routePoints)
+                    
+                    Log.d("[ChartOnlyScreen]", "경로 점 업데이트: ${editingPoints.size}개")
+                } else {
+                    // 표시하지 않으면 제거
+                    mapLibreMap?.let { map ->
+                        PMTilesLoader.removeRouteLine(map, routeId)
+                    }
+                }
+            } else {
+                // 점이 없으면 제거
+                mapLibreMap?.let { map ->
+                    PMTilesLoader.removeRouteLine(map, "editing_route")
+                }
+            }
+        } else if (!mapUiState.isEditingRoute) {
+            // 편집 모드가 종료되면 편집 중 경로 제거
+            mapLibreMap?.let { map ->
+                PMTilesLoader.removeRouteLine(map, "editing_route")
+            }
+        }
+    }
+    
+    // routeVisible 설정 변경 시 모든 경로 표시 업데이트
+    LaunchedEffect(systemSettings.routeVisible, mapUiState.isEditingRoute) {
+        if (!mapUiState.isEditingRoute && mapLibreMap != null) {
+            val allRoutes = viewModel.getAllRoutes()
+            if (systemSettings.routeVisible) {
+                // 모든 경로 표시
+                allRoutes.forEach { route ->
+                    val routePoints = route.points.map { 
+                        org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
+                    }
+                    if (routePoints.size >= 2) {
+                        PMTilesLoader.addRouteLine(mapLibreMap!!, route.id, routePoints)
+                    }
+                    PMTilesLoader.addRoutePoints(mapLibreMap!!, route.id, routePoints)
+                }
+            } else {
+                // 모든 경로 제거
+                allRoutes.forEach { route ->
+                    PMTilesLoader.removeRouteLine(mapLibreMap!!, route.id)
+                }
+            }
+        }
+    }
+    
+    // 경로 목록 변경 시 경로 표시 업데이트
+    LaunchedEffect(Unit) {
+        if (mapLibreMap != null && systemSettings.routeVisible && !mapUiState.isEditingRoute) {
+            val allRoutes = viewModel.getAllRoutes()
+            allRoutes.forEach { route ->
+                val routePoints = route.points.map { 
+                    org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
+                }
+                if (routePoints.size >= 2) {
+                    PMTilesLoader.addRouteLine(mapLibreMap!!, route.id, routePoints)
+                }
+                PMTilesLoader.addRoutePoints(mapLibreMap!!, route.id, routePoints)
+            }
+        }
+    }
+    
+
+    // 경로 생성 설명 다이얼로그
+    if (dialogUiState.showRouteCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.updateShowRouteCreateDialog(false) },
+            title = { Text("경로 생성") },
+            text = {
+                Column {
+                    Text("경로를 생성하는 방법:")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("1. '생성' 버튼을 누르면 경로 생성 모드가 시작됩니다", fontSize = 12.sp)
+                    Text("2. 지도를 클릭하여 경로에 점을 추가하세요", fontSize = 12.sp)
+                    Text("3. 점이 추가되면 파란색 원으로 표시됩니다", fontSize = 12.sp)
+                    Text("4. 최소 2개 이상의 점을 추가하세요", fontSize = 12.sp)
+                    Text("5. '완료' 버튼을 눌러 경로 이름을 입력하고 저장하세요", fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        Log.d("[ChartOnlyScreen]", "경로 생성 버튼 클릭 - 편집 모드 시작")
+                        viewModel.updateShowRouteCreateDialog(false)
+                        // 경로 편집 모드 시작
+                        viewModel.setEditingRoute(true)
+                        viewModel.setEditingRoutePoints(emptyList())
+                        viewModel.selectRoute(null)
+                        Log.d("[ChartOnlyScreen]", "편집 모드 설정 완료: isEditingRoute=${viewModel.mapUiState.isEditingRoute}")
+                    }
+                ) {
+                    Text("생성")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.updateShowRouteCreateDialog(false) }) {
+                    Text("취소")
+                }
+            }
+        )
+    }
+
     // 경유지 관리 다이얼로그
     if (dialogUiState.showWaypointDialog) {
         AlertDialog(
@@ -1707,6 +1838,26 @@ fun ChartOnlyScreen(
                                 Log.d("[MainActivity]", "경유지 ${waypointsToRemove.size}개 제거됨")
                             }
 
+                            // 항해 중인 경로가 있으면 현재 위치 기준으로 재연결 (선박 이동 시 계속 업데이트)
+                            val currentNavigationRoute = mapUiState.currentNavigationRoute
+                            if (currentNavigationRoute != null && mapUiState.navigationPoint != null) {
+                                val currentLatLng = LatLng(lat, lng)
+                                try {
+                                    val connectRouteToNavigationUseCase = ConnectRouteToNavigationUseCase(
+                                        CalculateDistanceUseCase()
+                                    )
+                                    val (waypoints, destination) = connectRouteToNavigationUseCase.execute(
+                                        currentNavigationRoute,
+                                        currentLatLng
+                                    )
+                                    viewModel.updateWaypoints(waypoints)
+                                    viewModel.updateNavigationPoint(destination)
+                                    Log.d("[ChartOnlyScreen]", "항해 경로 재연결: 선박 이동에 따라 경로 업데이트")
+                                } catch (e: Exception) {
+                                    Log.e("[ChartOnlyScreen]", "경로 재연결 실패: ${e.message}")
+                                }
+                            }
+
                             // 항해 경로 업데이트 (모든 모드에서 navigationPoint가 있으면)
                             updateNavigationRouteUseCase.execute(
                                 map,
@@ -1850,8 +2001,22 @@ fun ChartOnlyScreen(
 
                     // 지도 클릭 이벤트 처리 (포인트 마커 클릭 감지 + 터치 위치에 커서 표시)
                     map.addOnMapClickListener { latLng ->
+                        // 경로 편집 모드인 경우: 경로에 점 추가 (가장 우선 처리)
+                        // ✅ ViewModel에서 최신 상태를 직접 가져와서 클로저 캡처 문제 해결
+                        val currentMapUiState = viewModel.mapUiState
+                        if (currentMapUiState.isEditingRoute) {
+                            Log.d("[ChartOnlyScreen]", "지도 클릭 - 경로 편집 모드: ${latLng.latitude}, ${latLng.longitude}")
+                            // 점 추가
+                            viewModel.addPointToEditingRoute(latLng.latitude, latLng.longitude)
+                            Log.d("[ChartOnlyScreen]", "점 추가 완료: 총 ${viewModel.mapUiState.editingRoutePoints.size}개")
+                            
+                            // 십자가 커서 표시하지 않음
+                            return@addOnMapClickListener true
+                        }
+                        
                         // 경유지 추가 모드인 경우: 커서만 표시
-                        if (dialogUiState.isAddingWaypoint) {
+                        val currentDialogUiState = viewModel.dialogUiState
+                        if (currentDialogUiState.isAddingWaypoint) {
                             val screenPoint = map.projection.toScreenLocation(latLng)
                             viewModel.updateCursorLatLng(latLng)
                             viewModel.updateCursorScreenPosition(screenPoint)
@@ -2056,6 +2221,152 @@ fun ChartOnlyScreen(
                         )
                     }
                 }
+            }
+        }
+
+        // 경로 편집 중 배너 (상단 표시) - 다른 오버레이 위에 표시
+        if (mapUiState.isEditingRoute) {
+            Log.d("[ChartOnlyScreen]", "경로 편집 배너 표시: isEditingRoute=${mapUiState.isEditingRoute}, points=${mapUiState.editingRoutePoints.size}")
+            var showNameDialog by remember { mutableStateOf(false) }
+            var routeName by remember { mutableStateOf(mapUiState.selectedRoute?.name ?: "Route ${viewModel.getAllRoutes().size + 1}") }
+            
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(16.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.Blue.copy(alpha = 0.95f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "경로 생성 중",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 16.sp
+                            )
+                            Text(
+                                "지도를 클릭하여 점을 추가하세요 (${mapUiState.editingRoutePoints.size}개)",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                        Row {
+                            Button(
+                                onClick = {
+                                    if (mapUiState.editingRoutePoints.size >= 2) {
+                                        showNameDialog = true
+                                    }
+                                },
+                                enabled = mapUiState.editingRoutePoints.size >= 2,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.Green
+                                )
+                            ) {
+                                Text("완료", color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextButton(
+                                onClick = {
+                                    viewModel.setEditingRoute(false)
+                                    viewModel.setEditingRoutePoints(emptyList())
+                                    viewModel.selectRoute(null)
+                                    // 편집 중인 경로 선 제거
+                                    mapLibreMap?.let { map ->
+                                        PMTilesLoader.removeRouteLine(map, "editing_route")
+                                        mapUiState.selectedRoute?.id?.let { routeId ->
+                                            PMTilesLoader.removeRouteLine(map, routeId)
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("취소", color = Color.White)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 경로 이름 입력 다이얼로그
+            if (showNameDialog) {
+                AlertDialog(
+                    onDismissRequest = { showNameDialog = false },
+                    title = { Text("경로 이름 입력") },
+                    text = {
+                        TextField(
+                            value = routeName,
+                            onValueChange = { routeName = it },
+                            label = { Text("경로 이름") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (routeName.isNotBlank() && mapUiState.editingRoutePoints.size >= 2) {
+                                    if (mapUiState.selectedRoute != null) {
+                                        // 기존 경로 업데이트
+                                        val updatedRoute = mapUiState.selectedRoute.copy(
+                                            name = routeName,
+                                            points = mapUiState.editingRoutePoints,
+                                            updatedAt = System.currentTimeMillis()
+                                        )
+                                        viewModel.updateRoute(updatedRoute)
+                                        // 지도에 경로 표시
+                                        mapLibreMap?.let { map ->
+                                            val routePoints = updatedRoute.points.map { 
+                                                org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
+                                            }
+//                                            PMTilesLoader.addRouteLine(map, updatedRoute.id, routePoints)
+                                        }
+                                    } else {
+                                        // 새 경로 생성
+                                        val newRoute = viewModel.createRoute(routeName, mapUiState.editingRoutePoints)
+                                        // 지도에 경로 표시
+                                        mapLibreMap?.let { map ->
+                                            val routePoints = newRoute.points.map { 
+                                                org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
+                                            }
+//                                            PMTilesLoader.addRouteLine(map, newRoute.id, routePoints)
+                                        }
+                                    }
+                                    // 편집 중 표시된 경로 선과 점 마커 제거
+                                    mapLibreMap?.let { map ->
+                                        val routeId = mapUiState.selectedRoute?.id ?: "editing_route"
+                                        PMTilesLoader.removeRouteLine(map, routeId)
+                                    }
+                                    viewModel.setEditingRoute(false)
+                                    viewModel.setEditingRoutePoints(emptyList())
+                                    viewModel.selectRoute(null)
+                                    showNameDialog = false
+                                }
+                            },
+                            enabled = routeName.isNotBlank()
+                        ) {
+                            Text("생성")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showNameDialog = false }) {
+                            Text("취소")
+                        }
+                    }
+                )
             }
         }
 

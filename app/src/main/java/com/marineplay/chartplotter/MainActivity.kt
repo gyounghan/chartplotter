@@ -107,7 +107,9 @@ import com.marineplay.chartplotter.presentation.theme.ChartPlotterTheme
 import com.marineplay.chartplotter.utils.DistanceCalculator
 import com.marineplay.chartplotter.data.datasources.LocalDataSource
 import com.marineplay.chartplotter.data.repositories.PointRepositoryImpl
+import com.marineplay.chartplotter.data.repositories.RouteRepositoryImpl
 import com.marineplay.chartplotter.domain.repositories.PointRepository
+import com.marineplay.chartplotter.domain.repositories.RouteRepository
 import com.marineplay.chartplotter.presentation.components.PointDialog
 import com.marineplay.chartplotter.presentation.components.DestinationDialog
 import com.marineplay.chartplotter.presentation.components.MenuPanel
@@ -166,6 +168,7 @@ class MainActivity : ComponentActivity() {
     // 헬퍼들
     private lateinit var pointRepository: PointRepository
     private lateinit var trackRepository: com.marineplay.chartplotter.domain.repositories.TrackRepository
+    private lateinit var routeRepository: RouteRepository
     private lateinit var sharedPreferences: SharedPreferences
 
     // Handler 및 Runnable (줌, 항적 타이머 등)
@@ -568,6 +571,7 @@ class MainActivity : ComponentActivity() {
         // Repository 초기화
         val localDataSource = LocalDataSource(this)
         pointRepository = PointRepositoryImpl(localDataSource, null)
+        routeRepository = RouteRepositoryImpl(localDataSource)
         val trackLocalDataSource = com.marineplay.chartplotter.data.datasources.TrackLocalDataSource(this)
         trackRepository = com.marineplay.chartplotter.data.repositories.TrackRepositoryImpl(trackLocalDataSource)
         val systemSettingsReader = com.marineplay.chartplotter.data.SystemSettingsReader(this)
@@ -608,6 +612,7 @@ class MainActivity : ComponentActivity() {
                     factory = MainViewModel.provideFactory(
                         pointRepository = pointRepository,
                         trackRepository = trackRepository,
+                        routeRepository = routeRepository,
                         locationManager = locationManager,
                         systemSettingsReader = systemSettingsReader
                     )
