@@ -38,6 +38,7 @@ import com.marineplay.chartplotter.domain.usecases.UpdateNavigationRouteUseCase
 import com.marineplay.chartplotter.domain.usecases.RouteUseCase
 import com.marineplay.chartplotter.domain.usecases.ConnectRouteToNavigationUseCase
 import com.marineplay.chartplotter.domain.usecases.CalculateDistanceUseCase
+import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.PMTilesLoader
 import com.marineplay.chartplotter.presentation.utils.ChartPlotterHelpers
 import kotlinx.coroutines.delay
@@ -98,6 +99,10 @@ fun ChartOnlyScreen(
     
     // AIS ViewModel 생성
     val aisViewModel = remember { AISModule.createAISViewModel(activity) }
+    
+    // 경로 점 편집 다이얼로그 상태
+    var showRoutePointEditDialog by remember { mutableStateOf(false) }
+    var selectedRoutePointForEdit by remember { mutableStateOf<RoutePoint?>(null) }
     
     // AIS 선박 데이터 구독
     val aisVessels by aisViewModel.vessels.collectAsState()
@@ -1312,7 +1317,7 @@ fun ChartOnlyScreen(
 
     // 경로 편집 중: 점 추가 시 지도 업데이트
     val systemSettings = viewModel.systemSettings
-    LaunchedEffect(mapUiState.isEditingRoute, mapUiState.editingRoutePoints.size) {
+    LaunchedEffect(mapUiState.isEditingRoute, mapUiState.editingRoutePoints) {
         if (mapUiState.isEditingRoute && mapLibreMap != null) {
             val editingPoints = mapUiState.editingRoutePoints
             if (editingPoints.isNotEmpty()) {
@@ -2001,14 +2006,50 @@ fun ChartOnlyScreen(
 
                     // 지도 클릭 이벤트 처리 (포인트 마커 클릭 감지 + 터치 위치에 커서 표시)
                     map.addOnMapClickListener { latLng ->
-                        // 경로 편집 모드인 경우: 경로에 점 추가 (가장 우선 처리)
+                        // 경로 편집 모드인 경우: 위치 이동 / 기존 점 클릭 / 새 점 추가
                         // ✅ ViewModel에서 최신 상태를 직접 가져와서 클로저 캡처 문제 해결
                         val currentMapUiState = viewModel.mapUiState
                         if (currentMapUiState.isEditingRoute) {
-                            Log.d("[ChartOnlyScreen]", "지도 클릭 - 경로 편집 모드: ${latLng.latitude}, ${latLng.longitude}")
-                            // 점 추가
-                            viewModel.addPointToEditingRoute(latLng.latitude, latLng.longitude)
-                            Log.d("[ChartOnlyScreen]", "점 추가 완료: 총 ${viewModel.mapUiState.editingRoutePoints.size}개")
+                            
+                            // 1) 위치 이동 모드인 경우: 클릭한 곳으로 점 이동
+                            val movingOrder = currentMapUiState.movingPointOrder
+                            if (movingOrder != null) {
+                                Log.d("[ChartOnlyScreen]", "점 #${movingOrder + 1} 위치 이동: ${latLng.latitude}, ${latLng.longitude}")
+                                viewModel.updatePointInEditingRoute(movingOrder, latLng.latitude, latLng.longitude)
+                                viewModel.setMovingPointOrder(null)
+                                showRoutePointEditDialog = false
+                                selectedRoutePointForEdit = null
+                                return@addOnMapClickListener true
+                            }
+                            
+                            // 2) 기존 경로 점 클릭 감지 (터치 위치 근처에 기존 점이 있는지 확인)
+                            val screenPoint = map.projection.toScreenLocation(latLng)
+                            val editingPoints = currentMapUiState.editingRoutePoints.sortedBy { it.order }
+                            var clickedExistingPoint: RoutePoint? = null
+                            
+                            for (point in editingPoints) {
+                                val pointLatLng = LatLng(point.latitude, point.longitude)
+                                val pointScreen = map.projection.toScreenLocation(pointLatLng)
+                                val dx = screenPoint.x - pointScreen.x
+                                val dy = screenPoint.y - pointScreen.y
+                                val distance = Math.sqrt((dx * dx + dy * dy).toDouble())
+                                if (distance < 40.0) { // 40px 이내면 클릭으로 간주
+                                    clickedExistingPoint = point
+                                    break
+                                }
+                            }
+                            
+                            if (clickedExistingPoint != null) {
+                                // 기존 점 클릭 → 편집 다이얼로그 표시
+                                Log.d("[ChartOnlyScreen]", "기존 경로 점 클릭: #${clickedExistingPoint.order}")
+                                selectedRoutePointForEdit = clickedExistingPoint
+                                showRoutePointEditDialog = true
+                            } else {
+                                // 3) 빈 곳 클릭 → 새 점 추가
+                                Log.d("[ChartOnlyScreen]", "지도 클릭 - 경로 편집 모드: ${latLng.latitude}, ${latLng.longitude}")
+                                viewModel.addPointToEditingRoute(latLng.latitude, latLng.longitude)
+                                Log.d("[ChartOnlyScreen]", "점 추가 완료: 총 ${viewModel.mapUiState.editingRoutePoints.size}개")
+                            }
                             
                             // 십자가 커서 표시하지 않음
                             return@addOnMapClickListener true
@@ -2367,6 +2408,157 @@ fun ChartOnlyScreen(
                         }
                     }
                 )
+            }
+            
+            // 경로 점 편집 다이얼로그 (위치 이동 모드가 아닐 때만 표시)
+            if (showRoutePointEditDialog && selectedRoutePointForEdit != null && mapUiState.movingPointOrder == null) {
+                val point = selectedRoutePointForEdit!!
+                
+                AlertDialog(
+                    onDismissRequest = { 
+                        showRoutePointEditDialog = false
+                        selectedRoutePointForEdit = null
+                    },
+                    title = { Text("경로 점 #${point.order + 1} 편집") },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "위도: ${"%.6f".format(point.latitude)}",
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                "경도: ${"%.6f".format(point.longitude)}",
+                                fontSize = 14.sp
+                            )
+                            
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            
+                            // 위치 이동 버튼 (지도 터치) → ViewModel에 movingPointOrder 설정
+                            Button(
+                                onClick = {
+                                    viewModel.setMovingPointOrder(point.order)
+                                    // 다이얼로그를 닫으면, 다음 클릭이 기존 리스너에서 위치 이동으로 처리됨
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2196F3)
+                                )
+                            ) {
+                                Text("위치 이동 (지도 터치)", color = Color.White)
+                            }
+                            
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            
+                            Text("순서 변경", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            
+                            // 순서 변경 버튼
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        viewModel.movePointUpInEditingRoute(point.order)
+                                        showRoutePointEditDialog = false
+                                        selectedRoutePointForEdit = null
+                                    },
+                                    enabled = point.order > 0,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("▲ 위로")
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.movePointDownInEditingRoute(point.order)
+                                        showRoutePointEditDialog = false
+                                        selectedRoutePointForEdit = null
+                                    },
+                                    enabled = point.order < mapUiState.editingRoutePoints.size - 1,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("▼ 아래로")
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        // 삭제 버튼
+                        Button(
+                            onClick = {
+                                viewModel.removePointFromEditingRoute(point.order)
+                                showRoutePointEditDialog = false
+                                selectedRoutePointForEdit = null
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Red
+                            )
+                        ) {
+                            Text("삭제", color = Color.White)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { 
+                            showRoutePointEditDialog = false
+                            selectedRoutePointForEdit = null
+                        }) {
+                            Text("닫기")
+                        }
+                    }
+                )
+            }
+            
+            // 위치 이동 모드 안내 배너 (movingPointOrder가 설정되었을 때)
+            if (mapUiState.movingPointOrder != null) {
+                val movingOrder = mapUiState.movingPointOrder!!
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .padding(bottom = 32.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF4CAF50).copy(alpha = 0.95f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "점 #${movingOrder + 1} 위치 이동 중",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                )
+                                Text(
+                                    "지도를 터치하여 새 위치를 지정하세요",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    viewModel.setMovingPointOrder(null)
+                                }
+                            ) {
+                                Text("취소", color = Color.White, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
             }
         }
 

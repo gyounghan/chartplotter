@@ -62,7 +62,8 @@ data class MapUiState(
     val selectedRoute: Route? = null, // 선택된 경로
     val isEditingRoute: Boolean = false, // 경로 편집 중
     val editingRoutePoints: List<RoutePoint> = emptyList(), // 편집 중인 경로 포인트
-    val currentNavigationRoute: Route? = null // 현재 항해 중인 경로
+    val currentNavigationRoute: Route? = null, // 현재 항해 중인 경로
+    val movingPointOrder: Int? = null // 위치 이동 중인 경로 점의 order (null이면 이동 모드 아님)
 )
 
 /**
@@ -356,6 +357,61 @@ class MainViewModel(
             point.copy(order = index)
         }
         mapUiState = mapUiState.copy(editingRoutePoints = reorderedPoints)
+    }
+    
+    /**
+     * 경로 편집 중 점의 위치 변경
+     */
+    fun updatePointInEditingRoute(order: Int, latitude: Double, longitude: Double) {
+        val currentPoints = mapUiState.editingRoutePoints.toMutableList()
+        val pointIndex = currentPoints.indexOfFirst { it.order == order }
+        if (pointIndex != -1) {
+            currentPoints[pointIndex] = currentPoints[pointIndex].copy(
+                latitude = latitude,
+                longitude = longitude
+            )
+            mapUiState = mapUiState.copy(editingRoutePoints = currentPoints)
+        }
+    }
+    
+    /**
+     * 경로 편집 중 점의 순서 변경 (위로 이동)
+     */
+    fun movePointUpInEditingRoute(order: Int) {
+        if (order <= 0) return
+        val sorted = mapUiState.editingRoutePoints.sortedBy { it.order }.toMutableList()
+        if (order >= sorted.size) return
+        
+        // swap
+        val current = sorted[order]
+        val previous = sorted[order - 1]
+        sorted[order - 1] = current.copy(order = order - 1)
+        sorted[order] = previous.copy(order = order)
+        
+        mapUiState = mapUiState.copy(editingRoutePoints = sorted)
+    }
+    
+    /**
+     * 경로 편집 중 점의 순서 변경 (아래로 이동)
+     */
+    fun movePointDownInEditingRoute(order: Int) {
+        val sorted = mapUiState.editingRoutePoints.sortedBy { it.order }.toMutableList()
+        if (order < 0 || order >= sorted.size - 1) return
+        
+        // swap
+        val current = sorted[order]
+        val next = sorted[order + 1]
+        sorted[order] = next.copy(order = order)
+        sorted[order + 1] = current.copy(order = order + 1)
+        
+        mapUiState = mapUiState.copy(editingRoutePoints = sorted)
+    }
+    
+    /**
+     * 경로 점 위치 이동 모드 설정/해제
+     */
+    fun setMovingPointOrder(order: Int?) {
+        mapUiState = mapUiState.copy(movingPointOrder = order)
     }
     
     /**
