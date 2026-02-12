@@ -101,7 +101,7 @@ fun ChartPlotterMap(
                     Log.d("[ChartPlotterMap]", "⏱️ [카메라 설정] 기본 위치: $centerPoint - ${cameraElapsed}ms")
 
                     val pmtilesStartTime = System.currentTimeMillis()
-                    PMTilesLoader.loadPMTilesFromAssets(context, map)
+                    PMTilesLoader.loadPMTiles(context, map)
                     val pmtilesElapsed = System.currentTimeMillis() - pmtilesStartTime
                     Log.d("[ChartPlotterMap]", "⏱️ [PMTiles 로드 호출] - ${pmtilesElapsed}ms")
 

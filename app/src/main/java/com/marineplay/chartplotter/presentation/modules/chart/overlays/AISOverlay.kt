@@ -424,41 +424,45 @@ class AISOverlay {
     )
     
     /**
-     * 삼각형 아이콘 생성 (북쪽을 향하는 이등변 삼각형, 밑변이 짧음)
-     * 속은 비어있고 갈색 테두리만 표시
+     * 삼각형 아이콘 생성 (북쪽을 향하는 이등변 삼각형)
+     * 차트플로터 표준: 초록색 채워진 삼각형 + 검은색 테두리
      */
     private fun createTriangleIcon(sizePx: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         
-        // 갈색 테두리만 사용 (속은 비어있음)
+        // 초록색 채움 (차트플로터 표준 AIS 타겟)
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(0, 180, 0) // 초록색 (Green)
+            style = Paint.Style.FILL
+        }
+        
+        // 검은색 테두리 (가시성 향상)
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(157, 108, 72) // 갈색 (Brown)
+            color = Color.rgb(0, 80, 0) // 진한 초록색 테두리
             style = Paint.Style.STROKE
-            strokeWidth = sizePx * 0.05f // 테두리 두께
+            strokeWidth = sizePx * 0.04f
         }
         
         val centerX = sizePx / 2f
         val centerY = sizePx / 2f
-        val height = sizePx * 0.5f // 삼각형 높이 (줄임)
-        // 이등변 삼각형의 무게중심이 비트맵 중심과 일치하도록 조정
-        // 무게중심은 높이의 1/3 지점(위에서부터)이므로, centerY가 무게중심이 되도록 설정
-        val topY = centerY - height * (2f / 3f) // 위쪽 꼭짓점 Y 좌표
-        val bottomY = centerY + height * (1f / 3f) // 아래쪽 밑변 Y 좌표
+        val height = sizePx * 0.5f
+        val topY = centerY - height * (2f / 3f)
+        val bottomY = centerY + height * (1f / 3f)
         
-        // 밑변이 짧은 이등변 삼각형 (밑변 너비를 좁게 설정)
-        val baseWidth = sizePx * 0.35f // 밑변 너비 (더 줄임)
+        val baseWidth = sizePx * 0.35f
         val leftX = centerX - baseWidth / 2f
         val rightX = centerX + baseWidth / 2f
         
-        // ✅ Path 재사용 (새로 만들지 말고 reset만)
+        // ✅ Path 재사용
         trianglePath.reset()
         trianglePath.moveTo(centerX, topY) // 위쪽 꼭짓점 (북쪽)
         trianglePath.lineTo(leftX, bottomY) // 왼쪽 아래
         trianglePath.lineTo(rightX, bottomY) // 오른쪽 아래
         trianglePath.close()
         
-        // 테두리만 그리기 (속은 비어있음)
+        // 채움 먼저, 테두리 나중에
+        canvas.drawPath(trianglePath, fillPaint)
         canvas.drawPath(trianglePath, strokePaint)
         
         return bitmap

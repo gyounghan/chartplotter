@@ -44,6 +44,10 @@ import java.io.File
 
 /**
  * PMTiles 파일을 자동으로 로드하고 MapLibre에 적용하는 유틸리티 클래스
+ * 
+ * 로딩 우선순위:
+ * 1. 외부 저장소 (getExternalFilesDir/charts/pmtiles/) + pmtiles_config.json
+ * 2. 내부 assets/pmtiles/ + 하드코딩 설정 (기존 방식, fallback)
  */
 object PMTilesLoader {
     
@@ -71,7 +75,77 @@ object PMTilesLoader {
     }
     
     /**
-     * PMTiles 파일을 자동으로 로드하고 MapLibre에 적용하는 메인 함수
+     * 통합 PMTiles 로딩 함수 (메인 진입점)
+     * 외부 저장소 우선 → 없으면 내부 assets fallback
+     */
+    fun loadPMTiles(context: Context, map: MapLibreMap) {
+        val totalStartTime = System.currentTimeMillis()
+        
+        // 외부 디렉토리 구조 초기화 (없으면 생성)
+        PMTilesManager.ensureExternalDirectories(context)
+        
+        // 외부 설정 파일이 없으면 기본 설정을 내보내기 (참고용)
+        if (!PMTilesManager.hasExternalConfig(context)) {
+            PMTilesManager.exportDefaultConfigToExternal(context)
+            Log.d("[PMTilesLoader]", "📄 기본 설정 JSON 내보내기 완료 (참고용)")
+        }
+        
+        // 1. 외부 PMTiles 파일 확인
+        val source = PMTilesManager.loadPMTilesSource(context)
+        
+        if (source.isExternal) {
+            Log.d("[PMTilesLoader]", "🌐 [외부 저장소] PMTiles 로드 시작: ${source.fileNames.size}개 파일")
+            loadFromExternal(context, map, source)
+            val elapsed = System.currentTimeMillis() - totalStartTime
+            Log.d("[PMTilesLoader]", "✅ [완료] 외부 PMTiles 로드 (총 ${elapsed}ms)")
+            return
+        }
+        
+        // 2. Fallback: 기존 assets 방식
+        Log.d("[PMTilesLoader]", "📦 [내부 assets] PMTiles 로드 시작 (fallback)")
+        loadPMTilesFromAssets(context, map)
+        val elapsed = System.currentTimeMillis() - totalStartTime
+        Log.d("[PMTilesLoader]", "✅ [완료] 내부 PMTiles 로드 (총 ${elapsed}ms)")
+    }
+    
+    /**
+     * 외부 저장소에서 PMTiles를 로드하는 함수
+     */
+    private fun loadFromExternal(context: Context, map: MapLibreMap, source: PMTilesManager.PMTilesSource) {
+        try {
+            // 설정 로드 (외부 JSON 우선 → 내부 하드코딩 fallback)
+            val (allConfigs, isExternalConfig) = PMTilesManager.loadConfigs(context)
+            
+            // 외부 PMTiles 파일과 매칭되는 설정만 필터링
+            val matchedConfigs = mutableListOf<PMTilesConfig>()
+            val matchedFiles = mutableListOf<File>()
+            
+            for (file in source.externalFiles) {
+                val config = allConfigs.find { it.fileName == file.name }
+                    ?: PMTilesManager.createDefaultConfigFromFileName(file.name)
+                matchedConfigs.add(config)
+                matchedFiles.add(file)
+                Log.d("[PMTilesLoader]", "📝 외부 매칭: ${file.name} → ${config.layerType} (설정: ${if (isExternalConfig) "외부 JSON" else "자동 생성"})")
+            }
+            
+            if (matchedConfigs.isEmpty()) {
+                Log.w("[PMTilesLoader]", "외부 PMTiles에 매칭되는 설정 없음. 기본 스타일 사용.")
+                loadDefaultStyle(map)
+                return
+            }
+            
+            // 외부 파일은 이미 접근 가능한 위치에 있으므로 복사 불필요, 직접 적용
+            applyPMTilesToMap(map, matchedConfigs, matchedFiles, context)
+            
+        } catch (e: Exception) {
+            Log.e("[PMTilesLoader]", "❌ 외부 PMTiles 로드 실패: ${e.message}, assets fallback으로 전환")
+            e.printStackTrace()
+            loadPMTilesFromAssets(context, map)
+        }
+    }
+    
+    /**
+     * PMTiles 파일을 자동으로 로드하고 MapLibre에 적용하는 함수 (내부 assets 전용)
      */
     fun loadPMTilesFromAssets(context: Context, map: MapLibreMap) {
         val totalStartTime = System.currentTimeMillis()
@@ -431,34 +505,99 @@ object PMTilesLoader {
     }
 
 
+    /**
+     * 아이콘 비트맵 로드 (외부 → drawable fallback)
+     * @param context 컨텍스트
+     * @param iconName 아이콘 이름 (확장자 제외)
+     * @param targetSizePx 목표 크기 (px)
+     * @return 리사이즈된 Bitmap 또는 null
+     */
+    private fun loadIconBitmap(context: Context, iconName: String, targetSizePx: Int): Bitmap? {
+        // 1. 외부 아이콘 폴더에서 시도
+        val externalIcon = PMTilesManager.getExternalIconFile(context, iconName)
+        if (externalIcon != null) {
+            try {
+                val bmp = BitmapFactory.decodeFile(externalIcon.absolutePath)
+                if (bmp != null) {
+                    val resized = Bitmap.createScaledBitmap(bmp, targetSizePx, targetSizePx, true)
+                    Log.d("[PMTilesLoader]", "아이콘 로드 (외부): $iconName (${targetSizePx}px)")
+                    return resized
+                }
+            } catch (e: Exception) {
+                Log.w("[PMTilesLoader]", "외부 아이콘 로드 실패, drawable fallback: $iconName, ${e.message}")
+            }
+        }
+        
+        // 2. Fallback: drawable 리소스
+        val resourceId = context.resources.getIdentifier(iconName, "drawable", context.packageName)
+        if (resourceId != 0) {
+            val bmp = BitmapFactory.decodeResource(context.resources, resourceId)
+            if (bmp != null) {
+                val resized = Bitmap.createScaledBitmap(bmp, targetSizePx, targetSizePx, true)
+                Log.d("[PMTilesLoader]", "아이콘 로드 (drawable): $iconName (${targetSizePx}px)")
+                return resized
+            }
+        }
+        
+        Log.w("[PMTilesLoader]", "아이콘을 찾을 수 없음: $iconName (외부/drawable 모두 없음)")
+        return null
+    }
+
+    /**
+     * BMP 아이콘 비트맵 로드 (외부 → drawable fallback, 흰색→투명 처리)
+     */
+    private fun loadIconBitmapWithTransparency(context: Context, iconName: String, targetSizePx: Int): Bitmap? {
+        // 1. 외부 아이콘 폴더에서 시도
+        val externalIcon = PMTilesManager.getExternalIconFile(context, iconName)
+        if (externalIcon != null) {
+            try {
+                val bmp = BitmapFactory.decodeFile(externalIcon.absolutePath)
+                if (bmp != null) {
+                    val processed = if (externalIcon.extension.equals("bmp", ignoreCase = true)) {
+                        makeTransparent(bmp, Color.WHITE)
+                    } else bmp
+                    val resized = Bitmap.createScaledBitmap(processed, targetSizePx, targetSizePx, true)
+                    Log.d("[PMTilesLoader]", "동적 아이콘 로드 (외부): $iconName (${targetSizePx}px)")
+                    return resized
+                }
+            } catch (e: Exception) {
+                Log.w("[PMTilesLoader]", "외부 동적 아이콘 로드 실패, drawable fallback: $iconName, ${e.message}")
+            }
+        }
+        
+        // 2. Fallback: drawable 리소스
+        val resourceId = context.resources.getIdentifier(iconName, "drawable", context.packageName)
+        if (resourceId != 0) {
+            val bitmap = when {
+                iconName.endsWith(".bmp", ignoreCase = true) -> {
+                    val drawable = context.resources.getDrawable(resourceId, null)
+                    val originalBitmap = drawable.toBitmap()
+                    makeTransparent(originalBitmap, Color.WHITE)
+                }
+                else -> BitmapFactory.decodeResource(context.resources, resourceId)
+            }
+            if (bitmap != null) {
+                val resized = Bitmap.createScaledBitmap(bitmap, targetSizePx, targetSizePx, true)
+                Log.d("[PMTilesLoader]", "동적 아이콘 로드 (drawable): $iconName (${targetSizePx}px)")
+                return resized
+            }
+        }
+        
+        Log.w("[PMTilesLoader]", "동적 아이콘을 찾을 수 없음: $iconName")
+        return null
+    }
+
     private fun addSymbolLayer(style: Style, config: PMTilesConfig, context: Context) {
         // 파일명에 따라 아이콘 결정
         val iconName = config.textField
         val iconId = "${iconName}-icon"
-        val targetSizePx = 40
-        // 1) drawable PNG를 스타일 이미지로 등록
+        val targetSizePx = (40 * config.iconSize).toInt() // config.iconSize 반영
+        // 1) 아이콘 로드 (외부 → drawable fallback)
         if (style.getImage(iconId) == null) {
-            try {
-                val resourceId = context.resources.getIdentifier(iconName, "drawable", context.packageName)
-                if (resourceId != 0) {
-                    val bmp = BitmapFactory.decodeResource(context.resources, resourceId)
-
-                    // 🌟 비트맵을 targetSizePx로 리사이즈
-                    val resizedBitmap = Bitmap.createScaledBitmap(
-                        bmp,
-                        targetSizePx,
-                        targetSizePx,
-                        true
-                    )
-
-                    style.addImage(iconId, resizedBitmap)
-                    Log.d("[PMTilesLoader]", "아이콘 로드 완료: $iconName")
-                } else {
-                    Log.w("[PMTilesLoader]", "아이콘 리소스를 찾을 수 없음: $iconName")
-                    return
-                }
-            } catch (e: Exception) {
-                Log.e("[PMTilesLoader]", "아이콘 로드 실패: $iconName, ${e.message}")
+            val resizedBitmap = loadIconBitmap(context, iconName, targetSizePx)
+            if (resizedBitmap != null) {
+                style.addImage(iconId, resizedBitmap)
+            } else {
                 return
             }
         }
@@ -474,20 +613,21 @@ object PMTilesLoader {
                 iconAllowOverlap(true),
                 iconIgnorePlacement(false),
                 iconAnchor(Property.ICON_ANCHOR_CENTER),
-                // 확대할수록 살짝 키우기
+                // 줌에 따라 아이콘 크기 조절 (비트맵은 이미 config.iconSize로 리사이즈됨)
                 iconSize(
                     interpolate(
-                        exponential(1f), zoom(),
-                        stop(10, 0.8f),
-                        stop(14, 1.0f),
-                        stop(18, 1.8f)
+                        exponential(1.5f), zoom(),
+                        stop(10, 0.3f),
+                        stop(13, 0.6f),
+                        stop(15, 1.0f),
+                        stop(18, 1.5f)
                     )
                 )
             )
         }
 
         style.addLayer(layer)
-        Log.d("[PMTilesLoader]", "심볼 레이어 추가: ${config.sourceName}-symbols ($iconName)")
+        Log.d("[PMTilesLoader]", "심볼 레이어 추가: ${config.sourceName}-symbols ($iconName, ${targetSizePx}px)")
     }
 
     /**
@@ -514,61 +654,24 @@ object PMTilesLoader {
         
         // 아이콘별 스케일 비율 저장용
         val iconScaleMap = mutableMapOf<String, Float>()
-        val targetSizePx: Int = 40 // 목표 크기 (px)
+        val targetSizePx: Int = (40 * config.iconSize).toInt() // 목표 크기 (px)
         val finalIconMapping = if (iconMapping.isEmpty()) defaultIconMapping else iconMapping
         
-        // 1) 모든 아이콘을 스타일에 등록 (파일 확장자에 따라 다르게 처리)
+        // 1) 모든 아이콘을 스타일에 등록 (외부 → drawable fallback)
         finalIconMapping.forEach { (iconValue, drawableName) ->
             val iconId = "${config.sourceName}-${iconValue}-icon"
             if (style.getImage(iconId) == null) {
-                try {
-                    val resourceId = context.resources.getIdentifier(drawableName, "drawable", context.packageName)
-                    if (resourceId != 0) {
-                        val bitmap = when {
-                            // BMP 파일인 경우 drawable을 직접 사용하고 흰색을 투명하게 처리
-                            drawableName.endsWith(".bmp", ignoreCase = true) -> {
-                                val drawable = context.resources.getDrawable(resourceId, null)
-                                val originalBitmap = drawable.toBitmap()
-                                
-                                // 흰색을 투명하게 변환
-                                val transparentBitmap = makeTransparent(originalBitmap, Color.WHITE)
-                                transparentBitmap
-                            }
-                            // PNG, JPG 등 다른 이미지 파일인 경우 BitmapFactory로 변환
-                            else -> {
-                                BitmapFactory.decodeResource(context.resources, resourceId)
-                            }
-                        }
-                        
-                        if (bitmap != null) {
-                             // 아이콘 비트맵의 최대 변 기준으로 스케일 계산
-                            val maxDim: Int = kotlin.math.max(bitmap.width, bitmap.height)
-                            val scale: Float = targetSizePx.toFloat() / maxDim.toFloat()
-                            iconScaleMap[iconId] = scale
-
-                            val resizedBitmap = Bitmap.createScaledBitmap(
-                                bitmap,
-                                targetSizePx,
-                                targetSizePx,
-                                true // 부드럽게 스케일링
-                            )
-
-//                            style.addImage(iconId, bitmap, true)
-                             style.addImage(iconId, resizedBitmap)
-                            Log.d("[PMTilesLoader]", "동적 아이콘 로드 완료: $iconValue -> $drawableName (${if (drawableName.endsWith(".bmp", ignoreCase = true)) "BMP 직접 사용" else "BitmapFactory 변환"})")
-                        } else {
-                            Log.w("[PMTilesLoader]", "아이콘 비트맵 생성 실패: $drawableName")
-                        }
-                    } else {
-                        Log.w("[PMTilesLoader]", "동적 아이콘 리소스를 찾을 수 없음: $drawableName")
-                    }
-                } catch (e: Exception) {
-                    Log.e("[PMTilesLoader]", "동적 아이콘 로드 실패: $iconValue -> $drawableName, ${e.message}")
+                val resizedBitmap = loadIconBitmapWithTransparency(context, drawableName, targetSizePx)
+                if (resizedBitmap != null) {
+                    style.addImage(iconId, resizedBitmap)
+                } else {
+                    Log.w("[PMTilesLoader]", "동적 아이콘 스킵: $iconValue -> $drawableName")
                 }
             }
         }
 
-        // 2) 동적 아이콘을 사용하는 SymbolLayer 생성
+        // 2) 동적 아이콘을 사용하는 SymbolLayer 생성 (iconSize 배율 적용)
+        val sizeMultiplier = config.iconSize
         val layer = SymbolLayer("${config.sourceName}-dynamic-symbols", config.sourceName).apply {
             setSourceLayer(config.sourceLayer)
             minZoom = 13f
@@ -589,33 +692,21 @@ object PMTilesLoader {
                 iconIgnorePlacement(false),
                 iconAnchor(Property.ICON_ANCHOR_CENTER),
 
-                // 확대할수록 살짝 키우기
+                // 줌에 따라 아이콘 크기 조절 (비트맵은 이미 config.iconSize로 리사이즈됨)
                 iconSize(
-                    product(
                     interpolate(
-                        exponential(1f), zoom(),
-                        stop(10, 0.8f),
-                        stop(14, 1.0f),
-                        stop(18, 1.8f)
-                    ),
-                     match(
-                         get("ICON"),
-                         literal(1.0f), // 기본값
-                         *finalIconMapping.map { (iconValue, _) ->
-                             val iconId = "${config.sourceName}-${iconValue}-icon"
-                             val scale = iconScaleMap[iconId] ?: 1.0f
-                             stop(iconValue, literal(scale))
-                         }.toTypedArray()
-                     )
+                        exponential(1.5f), zoom(),
+                        stop(10, 0.3f),
+                        stop(13, 0.6f),
+                        stop(15, 1.0f),
+                        stop(18, 1.5f)
                     )
-
-//                    interpolate( exponential(1f), zoom(), stop(14, 1f), stop(16, 2f) )
                 )
             )
         }
 
         style.addLayer(layer)
-        Log.d("[PMTilesLoader]", "동적 심볼 레이어 추가: ${config.sourceName}-dynamic-symbols")
+        Log.d("[PMTilesLoader]", "동적 심볼 레이어 추가: ${config.sourceName}-dynamic-symbols (iconSize=${sizeMultiplier}x)")
     }
 
     /**

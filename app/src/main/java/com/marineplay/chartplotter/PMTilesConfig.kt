@@ -1,6 +1,8 @@
 package com.marineplay.chartplotter
 
 import android.graphics.Color
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * PMTiles 파일의 설정을 정의하는 데이터 클래스
@@ -14,8 +16,103 @@ data class PMTilesConfig(
     val hasTextLayer: Boolean = false,
     val textField: String = "VALUE",
     val isDynamicSymbol: Boolean = false, // 동적 심볼 사용 여부
-    val iconMapping: Map<String, String> = emptyMap() // ICON 값과 drawable 리소스명 매핑
-)
+    val iconMapping: Map<String, String> = emptyMap(), // ICON 값과 drawable 리소스명 매핑
+    val iconSize: Float = 1.0f // 아이콘 크기 배율 (1.0 = 기본, 0.5 = 절반, 2.0 = 두배)
+) {
+    /** PMTilesConfig → JSONObject 변환 */
+    fun toJson(): JSONObject {
+        return JSONObject().apply {
+            put("fileName", fileName)
+            put("sourceName", sourceName)
+            put("sourceLayer", sourceLayer)
+            put("layerType", layerType.name)
+            
+            // colorMapping: Int→Int 를 String→String(hex) 으로
+            if (colorMapping.isNotEmpty()) {
+                put("colorMapping", JSONObject().apply {
+                    colorMapping.forEach { (key, color) ->
+                        put(key.toString(), String.format("#%08X", color))
+                    }
+                })
+            }
+            
+            put("hasTextLayer", hasTextLayer)
+            put("textField", textField)
+            put("isDynamicSymbol", isDynamicSymbol)
+            
+            if (iconMapping.isNotEmpty()) {
+                put("iconMapping", JSONObject().apply {
+                    iconMapping.forEach { (k, v) -> put(k, v) }
+                })
+            }
+            
+            put("iconSize", iconSize.toDouble())
+        }
+    }
+    
+    companion object {
+        /** JSONObject → PMTilesConfig 변환 */
+        fun fromJson(json: JSONObject): PMTilesConfig {
+            val colorMapping = mutableMapOf<Int, Int>()
+            json.optJSONObject("colorMapping")?.let { obj ->
+                obj.keys().forEach { key ->
+                    try {
+                        colorMapping[key.toInt()] = Color.parseColor(obj.getString(key))
+                    } catch (_: Exception) {}
+                }
+            }
+            
+            val iconMapping = mutableMapOf<String, String>()
+            json.optJSONObject("iconMapping")?.let { obj ->
+                obj.keys().forEach { key ->
+                    iconMapping[key] = obj.getString(key)
+                }
+            }
+            
+            return PMTilesConfig(
+                fileName = json.getString("fileName"),
+                sourceName = json.getString("sourceName"),
+                sourceLayer = json.getString("sourceLayer"),
+                layerType = try { LayerType.valueOf(json.getString("layerType")) } catch (_: Exception) { LayerType.TEXT },
+                colorMapping = colorMapping,
+                hasTextLayer = json.optBoolean("hasTextLayer", false),
+                textField = json.optString("textField", "VALUE"),
+                isDynamicSymbol = json.optBoolean("isDynamicSymbol", false),
+                iconMapping = iconMapping,
+                iconSize = json.optDouble("iconSize", 1.0).toFloat()
+            )
+        }
+    }
+}
+
+/**
+ * PMTiles 설정 파일 전체를 표현하는 데이터 클래스
+ */
+data class PMTilesConfigFile(
+    val version: Int = 1,
+    val configs: List<PMTilesConfig>
+) {
+    /** 전체 설정 → JSON 문자열 (pretty print) */
+    fun toJsonString(): String {
+        val root = JSONObject()
+        root.put("version", version)
+        val arr = JSONArray()
+        configs.forEach { arr.put(it.toJson()) }
+        root.put("configs", arr)
+        return root.toString(2) // 들여쓰기 2칸
+    }
+    
+    companion object {
+        /** JSON 문자열 → PMTilesConfigFile */
+        fun fromJsonString(jsonString: String): PMTilesConfigFile {
+            val root = JSONObject(jsonString)
+            val version = root.optInt("version", 1)
+            val arr = root.getJSONArray("configs")
+            val configs = (0 until arr.length()).map { PMTilesConfig.fromJson(arr.getJSONObject(it)) }
+            return PMTilesConfigFile(version = version, configs = configs)
+        }
+    }
+}
 
 /**
  * 레이어 타입 정의
@@ -29,8 +126,23 @@ enum class LayerType {
 
 /**
  * PMTiles 설정 관리자
+ * 
+ * 로딩 우선순위:
+ * 1. 외부 저장소 (getExternalFilesDir/charts/) + pmtiles_config.json
+ * 2. 내부 assets/pmtiles/ + 하드코딩 설정 (기존 방식, fallback)
  */
 object PMTilesManager {
+    
+    private const val TAG = "[PMTilesManager]"
+    
+    /** 외부 차트 디렉토리 이름 */
+    const val EXTERNAL_CHARTS_DIR = "charts"
+    /** 외부 PMTiles 디렉토리 이름 */
+    const val EXTERNAL_PMTILES_DIR = "pmtiles"
+    /** 외부 아이콘 디렉토리 이름 */
+    const val EXTERNAL_ICONS_DIR = "icons"
+    /** 외부 설정 파일 이름 */
+    const val CONFIG_FILE_NAME = "pmtiles_config.json"
     
     /**
      * 기본 색상 매핑 설정
@@ -286,12 +398,48 @@ object PMTilesManager {
                 textField = "wrecks"
             ),
             PMTilesConfig(
-                fileName = "lighthouse.pmtiles",
-                sourceName = "lighthouse-source",
-                sourceLayer = "lighthouse",
+                fileName = "p_lights.pmtiles",
+                sourceName = "p_lights-source",
+                sourceLayer = "p_lights",
                 layerType = LayerType.SYMBOL,
                 hasTextLayer = true,
-                textField = "lighthouse"
+                isDynamicSymbol = true,
+                iconMapping = mapOf(
+                    "lights" to "lights",
+                    "lights_red" to "lights_red",
+                    "lights_white" to "lights_white",
+                    "lights_yellow" to "lights_yellow",
+                    "lights_green" to "lights_green",
+                ),
+                iconSize = 2f,
+            ),
+            PMTilesConfig(
+                fileName = "p_boylat.pmtiles",
+                sourceName = "p_boylat-source",
+                sourceLayer = "p_boylat",
+                layerType = LayerType.SYMBOL,
+                hasTextLayer = true,
+                isDynamicSymbol = true,
+                iconMapping = mapOf(
+                    "boylat_red" to "boylat_red",
+                    "boylat_green" to "boylat_green",
+                ),
+                iconSize = 2f,
+            ),
+            PMTilesConfig(
+                fileName = "p_boyspp.pmtiles",
+                sourceName = "p_boyspp-source",
+                sourceLayer = "p_boyspp",
+                layerType = LayerType.SYMBOL,
+                hasTextLayer = true,
+                isDynamicSymbol = true,
+                iconMapping = mapOf(
+                    "boyspp_conical" to "boyspp_conical",
+                    "boyspp_cylindrical" to "boyspp_cylindrical",
+                    "boyspp_spherical" to "boyspp_spherical",
+                    "boyspp_pillar" to "boyspp_pillar",
+                ),
+                iconSize = 2f,
             ),
             PMTilesConfig(
                 fileName = "p_bcnlat_6.pmtiles",
@@ -483,7 +631,7 @@ object PMTilesManager {
     }
     
     /**
-     * 파일명으로 PMTiles 설정을 찾는 함수
+     * 파일명으로 PMTiles 설정을 찾는 함수 (내부 하드코딩 설정 기준)
      * 기존 설정이 있으면 우선 사용하고, 없으면 파일명 규칙에 따라 자동 생성
      */
     fun findConfigByFileName(fileName: String): PMTilesConfig? {
@@ -493,7 +641,7 @@ object PMTilesManager {
         }
         
         // 2. 없으면 파일명 규칙에 따라 자동 생성
-        android.util.Log.d("[PMTilesManager]", "설정이 없어 파일명 규칙으로 자동 생성: $fileName")
+        android.util.Log.d(TAG, "설정이 없어 파일명 규칙으로 자동 생성: $fileName")
         return createDefaultConfigFromFileName(fileName)
     }
     
@@ -509,6 +657,187 @@ object PMTilesManager {
      */
     fun getBdrColorMapping(): Map<Int, Int> {
         return bdrColorMappings
+    }
+    
+    // ========================================================================
+    // 외부 저장소 로딩 관련 함수들
+    // ========================================================================
+    
+    /**
+     * 외부 차트 디렉토리 경로를 반환
+     * 경로: /sdcard/Android/data/{packageName}/files/charts/
+     */
+    fun getExternalChartsDir(context: android.content.Context): java.io.File {
+        return java.io.File(context.getExternalFilesDir(null), EXTERNAL_CHARTS_DIR)
+    }
+    
+    /**
+     * 외부 PMTiles 디렉토리 경로를 반환
+     */
+    fun getExternalPMTilesDir(context: android.content.Context): java.io.File {
+        return java.io.File(getExternalChartsDir(context), EXTERNAL_PMTILES_DIR)
+    }
+    
+    /**
+     * 외부 아이콘 디렉토리 경로를 반환
+     */
+    fun getExternalIconsDir(context: android.content.Context): java.io.File {
+        return java.io.File(getExternalChartsDir(context), EXTERNAL_ICONS_DIR)
+    }
+    
+    /**
+     * 외부 설정 파일 경로를 반환
+     */
+    fun getExternalConfigFile(context: android.content.Context): java.io.File {
+        return java.io.File(getExternalChartsDir(context), CONFIG_FILE_NAME)
+    }
+    
+    /**
+     * 외부 디렉토리 구조를 초기화 (없으면 생성)
+     */
+    fun ensureExternalDirectories(context: android.content.Context) {
+        getExternalPMTilesDir(context).mkdirs()
+        getExternalIconsDir(context).mkdirs()
+        android.util.Log.d(TAG, "외부 디렉토리 확인/생성: ${getExternalChartsDir(context).absolutePath}")
+    }
+    
+    /**
+     * 외부 저장소에 PMTiles 파일이 있는지 확인
+     */
+    fun hasExternalPMTiles(context: android.content.Context): Boolean {
+        val dir = getExternalPMTilesDir(context)
+        if (!dir.exists()) return false
+        return dir.listFiles { f -> f.extension == "pmtiles" }?.isNotEmpty() == true
+    }
+    
+    /**
+     * 외부 저장소에 설정 파일이 있는지 확인
+     */
+    fun hasExternalConfig(context: android.content.Context): Boolean {
+        return getExternalConfigFile(context).exists()
+    }
+    
+    /**
+     * 외부 PMTiles 파일 목록을 가져오는 함수
+     * @return 파일명 리스트 (예: ["lineTiles.pmtiles", "p_soundg_1.pmtiles"])
+     */
+    fun getExternalPMTilesFiles(context: android.content.Context): List<String> {
+        val dir = getExternalPMTilesDir(context)
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles { f -> f.extension == "pmtiles" }
+            ?.map { it.name }
+            ?.sorted()
+            ?: emptyList()
+    }
+    
+    /**
+     * 외부 PMTiles 파일들의 File 객체를 가져오는 함수
+     */
+    fun getExternalPMTilesFileObjects(context: android.content.Context): List<java.io.File> {
+        val dir = getExternalPMTilesDir(context)
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles { f -> f.extension == "pmtiles" }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+    }
+    
+    /**
+     * 외부 JSON 설정 파일을 로드
+     * @return PMTilesConfigFile 또는 null (파일 없음/파싱 실패)
+     */
+    fun loadExternalConfig(context: android.content.Context): PMTilesConfigFile? {
+        val configFile = getExternalConfigFile(context)
+        if (!configFile.exists()) {
+            android.util.Log.d(TAG, "외부 설정 파일 없음: ${configFile.absolutePath}")
+            return null
+        }
+        
+        return try {
+            val jsonString = configFile.readText(Charsets.UTF_8)
+            val configFileObj = PMTilesConfigFile.fromJsonString(jsonString)
+            android.util.Log.d(TAG, "외부 설정 로드 성공: ${configFileObj.configs.size}개 설정 (v${configFileObj.version})")
+            configFileObj
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "외부 설정 파싱 실패: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * 외부 아이콘 파일 경로를 반환 (없으면 null)
+     * @param iconName 아이콘 이름 (확장자 제외)
+     */
+    fun getExternalIconFile(context: android.content.Context, iconName: String): java.io.File? {
+        val iconsDir = getExternalIconsDir(context)
+        if (!iconsDir.exists()) return null
+        
+        // png, jpg, bmp 순서로 탐색
+        for (ext in listOf("png", "jpg", "bmp")) {
+            val file = java.io.File(iconsDir, "$iconName.$ext")
+            if (file.exists()) return file
+        }
+        return null
+    }
+    
+    /**
+     * 현재 하드코딩된 설정을 JSON 파일로 내보내기
+     * 외부 charts/ 디렉토리에 pmtiles_config.json 생성
+     */
+    fun exportDefaultConfigToExternal(context: android.content.Context): Boolean {
+        return try {
+            ensureExternalDirectories(context)
+            val configFile = getExternalConfigFile(context)
+            val configData = PMTilesConfigFile(version = 1, configs = pmtilesConfigs)
+            configFile.writeText(configData.toJsonString(), Charsets.UTF_8)
+            android.util.Log.d(TAG, "기본 설정 내보내기 성공: ${configFile.absolutePath}")
+            true
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "기본 설정 내보내기 실패: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * 통합 설정 로딩: 외부 설정 우선, 없으면 내부 하드코딩 사용
+     * @return Pair<List<PMTilesConfig>, Boolean> - (설정 리스트, 외부 설정 사용 여부)
+     */
+    fun loadConfigs(context: android.content.Context): Pair<List<PMTilesConfig>, Boolean> {
+        // 1. 외부 설정 시도
+        val externalConfig = loadExternalConfig(context)
+        if (externalConfig != null && externalConfig.configs.isNotEmpty()) {
+            android.util.Log.d(TAG, "✅ 외부 설정 사용: ${externalConfig.configs.size}개")
+            return Pair(externalConfig.configs, true)
+        }
+        
+        // 2. Fallback: 내부 하드코딩 설정
+        android.util.Log.d(TAG, "📦 내부 하드코딩 설정 사용 (fallback): ${pmtilesConfigs.size}개")
+        return Pair(pmtilesConfigs, false)
+    }
+    
+    /**
+     * 통합 PMTiles 파일 정보 로딩
+     * 외부 파일 우선, 없으면 assets 사용
+     * @return Triple<List<파일명>, Boolean(외부 사용 여부), List<File>?(외부 파일 객체, 외부 사용 시)>
+     */
+    data class PMTilesSource(
+        val fileNames: List<String>,
+        val isExternal: Boolean,
+        val externalFiles: List<java.io.File> = emptyList()
+    )
+    
+    fun loadPMTilesSource(context: android.content.Context): PMTilesSource {
+        // 1. 외부 파일 확인
+        if (hasExternalPMTiles(context)) {
+            val files = getExternalPMTilesFileObjects(context)
+            val names = files.map { it.name }
+            android.util.Log.d(TAG, "✅ 외부 PMTiles 사용: ${files.size}개 파일")
+            return PMTilesSource(fileNames = names, isExternal = true, externalFiles = files)
+        }
+        
+        // 2. Fallback: assets
+        val assetFiles = getPMTilesFilesFromAssets(context)
+        android.util.Log.d(TAG, "📦 내부 assets PMTiles 사용 (fallback): ${assetFiles.size}개 파일")
+        return PMTilesSource(fileNames = assetFiles, isExternal = false)
     }
 }
 
