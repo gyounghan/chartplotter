@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 
 /**
  * 설정 화면 - 2단 레이아웃
@@ -27,6 +28,7 @@ import com.marineplay.chartplotter.viewmodel.MainViewModel
 @Composable
 fun SettingsScreen(
     viewModel: MainViewModel,
+    settingsViewModel: SettingsViewModel,
     onDismiss: () -> Unit
 ) {
     var selectedCategory by remember { mutableStateOf("시스템") }
@@ -138,16 +140,16 @@ fun SettingsScreen(
                     .background(Color(0xFF1A1A1A))
             ) {
                 when (selectedCategory) {
-                    "시스템" -> SystemSettingsContent(viewModel)
-                    "항해" -> NavigationSettingsContent(viewModel)
-                    "지도" -> MapSettingsContent(viewModel)
-                    "무선" -> WirelessSettingsContent(viewModel)
-                    "네트워크" -> NetworkSettingsContent(viewModel)
-                    "선박" -> VesselSettingsContent(viewModel)
-                    "카메라" -> CameraSettingsContent(viewModel)
-                    "경보" -> AlertSettingsContent(viewModel)
-                    "단위" -> UnitSettingsContent(viewModel)
-                    else -> SystemSettingsContent(viewModel)
+                    "시스템" -> SystemSettingsContent(settingsViewModel, viewModel)
+                    "항해" -> NavigationSettingsContent(settingsViewModel, viewModel)
+                    "지도" -> MapSettingsContent(settingsViewModel)
+                    "무선" -> WirelessSettingsContent(settingsViewModel)
+                    "네트워크" -> NetworkSettingsContent(settingsViewModel)
+                    "선박" -> VesselSettingsContent(settingsViewModel)
+                    "카메라" -> CameraSettingsContent(settingsViewModel)
+                    "경보" -> AlertSettingsContent(settingsViewModel)
+                    "단위" -> UnitSettingsContent(settingsViewModel)
+                    else -> SystemSettingsContent(settingsViewModel, viewModel)
                 }
             }
         }
@@ -197,7 +199,7 @@ private fun SettingsCategoryItem(
 }
 
 @Composable
-private fun SystemSettingsContent(viewModel: MainViewModel) {
+private fun SystemSettingsContent(viewModel: SettingsViewModel, mainViewModel: MainViewModel) {
     val systemSettings = viewModel.systemSettings
     var showLanguageOptions by remember { mutableStateOf(false) }
     var showFontSizeOptions by remember { mutableStateOf(false) }
@@ -244,7 +246,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
             title = "자선 설정",
             value = null,
             onClick = {
-                viewModel.updateShowVesselSettingsDialog(true)
+                mainViewModel.updateShowVesselSettingsDialog(true)
             },
             hasSubMenu = true
         )
@@ -430,7 +432,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        viewModel.updateShowDeclinationDialog(true)
+                        mainViewModel.updateShowDeclinationDialog(true)
                         showDeclinationOptions = false
                     }
                     .padding(vertical = 8.dp, horizontal = 16.dp),
@@ -444,7 +446,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
             title = "기본설정으로 복원",
             value = null,
             onClick = {
-                viewModel.updateShowResetConfirmDialog(true)
+                mainViewModel.updateShowResetConfirmDialog(true)
             },
             hasSubMenu = true
         )
@@ -453,7 +455,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
         SettingsRow(
             title = "전원제어",
             value = null,
-            onClick = { viewModel.updateCurrentMenu("system_power") },
+            onClick = { mainViewModel.updateCurrentMenu("system_power") },
             hasSubMenu = true
         )
         
@@ -461,7 +463,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
         SettingsRow(
             title = "고급",
             value = null,
-            onClick = { viewModel.updateCurrentMenu("system_advanced") },
+            onClick = { mainViewModel.updateCurrentMenu("system_advanced") },
             hasSubMenu = true
         )
         
@@ -469,7 +471,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
         SettingsRow(
             title = "연결 및 등록",
             value = if (systemSettings.mobileConnected) "연결됨" else "연결 안됨",
-            onClick = { viewModel.updateCurrentMenu("system_connection") }
+            onClick = { mainViewModel.updateCurrentMenu("system_connection") }
         )
         
         // 정보
@@ -477,7 +479,7 @@ private fun SystemSettingsContent(viewModel: MainViewModel) {
             title = "정보",
             value = null,
             onClick = {
-                viewModel.updateShowInfoDialog(true)
+                mainViewModel.updateShowInfoDialog(true)
             },
             hasSubMenu = true
         )
@@ -544,7 +546,7 @@ private fun SettingsRow(
 
 // 다른 카테고리들의 플레이스홀더
 @Composable
-private fun FeaturesSettingsContent(viewModel: MainViewModel) {
+private fun FeaturesSettingsContent(viewModel: SettingsViewModel) {
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
@@ -565,7 +567,7 @@ private fun FeaturesSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun ServiceSettingsContent(viewModel: MainViewModel) {
+private fun ServiceSettingsContent(viewModel: SettingsViewModel) {
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
@@ -586,7 +588,7 @@ private fun ServiceSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun NavigationSettingsContent(viewModel: MainViewModel) {
+private fun NavigationSettingsContent(viewModel: SettingsViewModel, mainViewModel: MainViewModel) {
     val systemSettings = viewModel.systemSettings
     var showArrivalRadiusDialog by remember { mutableStateOf(false) }
     var showXteLimitDialog by remember { mutableStateOf(false) }
@@ -641,7 +643,7 @@ private fun NavigationSettingsContent(viewModel: MainViewModel) {
             title = "항적",
             value = null,
             onClick = {
-                viewModel.updateShowTrackListDialog(true)
+                mainViewModel.updateShowTrackListDialog(true)
             },
             hasSubMenu = true
         )
@@ -739,7 +741,7 @@ private fun NavigationSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun MapSettingsContent(viewModel: MainViewModel) {
+private fun MapSettingsContent(viewModel: SettingsViewModel) {
     val systemSettings = viewModel.systemSettings
     
     var showDistanceCircleDialog by remember { mutableStateOf(false) }
@@ -1041,7 +1043,7 @@ private fun MapSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun WirelessSettingsContent(viewModel: MainViewModel) {
+private fun WirelessSettingsContent(viewModel: SettingsViewModel) {
     val systemSettings = viewModel.systemSettings
     
     var showBluetoothOptionsDialog by remember { mutableStateOf(false) }
@@ -1187,7 +1189,7 @@ private fun WirelessSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun NetworkSettingsContent(viewModel: MainViewModel) {
+private fun NetworkSettingsContent(viewModel: SettingsViewModel) {
     val systemSettings = viewModel.systemSettings
     
     var showNmea2000Dialog by remember { mutableStateOf(false) }
@@ -1297,7 +1299,7 @@ private fun NetworkSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun VesselSettingsContent(viewModel: MainViewModel) {
+private fun VesselSettingsContent(viewModel: SettingsViewModel) {
     val systemSettings = viewModel.systemSettings
     
     var showMmsiDialog by remember { mutableStateOf(false) }
@@ -1504,7 +1506,7 @@ private fun VesselSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun CameraSettingsContent(viewModel: MainViewModel) {
+private fun CameraSettingsContent(viewModel: SettingsViewModel) {
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
@@ -1525,7 +1527,7 @@ private fun CameraSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun AlertSettingsContent(viewModel: MainViewModel) {
+private fun AlertSettingsContent(viewModel: SettingsViewModel) {
     val systemSettings = viewModel.systemSettings
     
     var showAlertHistoryDialog by remember { mutableStateOf(false) }
@@ -1684,7 +1686,7 @@ private fun AlertSettingsContent(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun UnitSettingsContent(viewModel: MainViewModel) {
+private fun UnitSettingsContent(viewModel: SettingsViewModel) {
     val systemSettings = viewModel.systemSettings
     
     var showDistanceUnitOptions by remember { mutableStateOf(false) }

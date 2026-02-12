@@ -32,6 +32,7 @@ import com.marineplay.chartplotter.presentation.modules.chart.components.MapCont
 import com.marineplay.chartplotter.presentation.modules.chart.components.MenuPanel
 import com.marineplay.chartplotter.presentation.modules.chart.components.MapOverlays
 import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.domain.mappers.PointMapper
 import com.marineplay.chartplotter.domain.usecases.UpdateNavigationRouteUseCase
@@ -79,6 +80,7 @@ import androidx.compose.runtime.collectAsState
 @Composable
 fun ChartOnlyScreen(
     viewModel: MainViewModel,
+    settingsViewModel: SettingsViewModel,
     activity: ComponentActivity,
     onMapLibreMapChange: (MapLibreMap?) -> Unit = {},
     onLocationManagerChange: (LocationManager?) -> Unit = {}
@@ -1316,7 +1318,7 @@ fun ChartOnlyScreen(
     }
 
     // 경로 편집 중: 점 추가 시 지도 업데이트
-    val systemSettings = viewModel.systemSettings
+    val systemSettings = settingsViewModel.systemSettings
     LaunchedEffect(mapUiState.isEditingRoute, mapUiState.editingRoutePoints) {
         if (mapUiState.isEditingRoute && mapLibreMap != null) {
             val editingPoints = mapUiState.editingRoutePoints
@@ -2565,6 +2567,7 @@ fun ChartOnlyScreen(
         // 메뉴 패널
         MenuPanel(
             viewModel = viewModel,
+            settingsViewModel = settingsViewModel,
             mapLibreMap = mapLibreMap,
             locationManager = locationManager,
             loadPointsFromLocal = { loadPointsFromLocal() },

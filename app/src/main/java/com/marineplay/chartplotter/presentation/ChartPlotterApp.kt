@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.EntryMode
 import com.marineplay.chartplotter.presentation.modules.*
@@ -27,6 +28,7 @@ import org.maplibre.android.maps.MapLibreMap
 fun ChartPlotterApp(
     entryMode: EntryMode,
     viewModel: MainViewModel,
+    settingsViewModel: SettingsViewModel,
     activity: ComponentActivity,
     onMapLibreMapChange: (MapLibreMap?) -> Unit = {},
     onLocationManagerChange: (LocationManager?) -> Unit = {}
@@ -45,6 +47,7 @@ fun ChartPlotterApp(
             // 차트 전용 화면
             ChartOnlyScreen(
                 viewModel = viewModel,
+                settingsViewModel = settingsViewModel,
                 activity = activity,
                 onMapLibreMapChange = onMapLibreMapChange,
                 onLocationManagerChange = onLocationManagerChange
@@ -72,6 +75,7 @@ fun ChartPlotterApp(
             // TODO: SplitScreen 구현
             ChartOnlyScreen(
                 viewModel = viewModel,
+                settingsViewModel = settingsViewModel,
                 activity = activity,
                 onMapLibreMapChange = onMapLibreMapChange,
                 onLocationManagerChange = onLocationManagerChange

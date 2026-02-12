@@ -25,6 +25,7 @@ import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.data.models.Route
 import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.PMTilesLoader
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.geometry.LatLng
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 @Composable
 fun MenuPanel(
     viewModel: MainViewModel,
+    settingsViewModel: SettingsViewModel,
     mapLibreMap: MapLibreMap?,
     locationManager: LocationManager?,
     loadPointsFromLocal: () -> List<SavedPoint>,
@@ -166,6 +168,7 @@ fun MenuPanel(
                     if (mapUiState.currentMenu == "route") {
                         MenuRouteContent(
                             viewModel = viewModel,
+                            settingsViewModel = settingsViewModel,
                             mapLibreMap = mapLibreMap,
                             locationManager = locationManager
                         )
@@ -615,6 +618,7 @@ private fun MenuDisplayContent(
 @Composable
 private fun MenuRouteContent(
     viewModel: MainViewModel,
+    settingsViewModel: SettingsViewModel,
     mapLibreMap: MapLibreMap?,
     locationManager: LocationManager?
 ) {
@@ -643,7 +647,7 @@ private fun MenuRouteContent(
     Spacer(modifier = Modifier.height(8.dp))
     
     // 경로 표시 토글
-    val systemSettings = viewModel.systemSettings
+    val systemSettings = settingsViewModel.systemSettings
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -658,7 +662,7 @@ private fun MenuRouteContent(
         )
         Switch(
             checked = systemSettings.routeVisible,
-            onCheckedChange = { viewModel.updateRouteVisible(it) }
+            onCheckedChange = { settingsViewModel.updateRouteVisible(it) }
         )
     }
     
