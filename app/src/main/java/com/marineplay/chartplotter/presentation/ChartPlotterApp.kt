@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.EntryMode
 import com.marineplay.chartplotter.presentation.modules.*
@@ -31,6 +32,7 @@ fun ChartPlotterApp(
     viewModel: MainViewModel,
     settingsViewModel: SettingsViewModel,
     trackViewModel: TrackViewModel,
+    routeViewModel: RouteViewModel,
     activity: ComponentActivity,
     onMapLibreMapChange: (MapLibreMap?) -> Unit = {},
     onLocationManagerChange: (LocationManager?) -> Unit = {}
@@ -51,6 +53,7 @@ fun ChartPlotterApp(
                 viewModel = viewModel,
                 settingsViewModel = settingsViewModel,
                 trackViewModel = trackViewModel,
+                routeViewModel = routeViewModel,
                 activity = activity,
                 onMapLibreMapChange = onMapLibreMapChange,
                 onLocationManagerChange = onLocationManagerChange
@@ -80,6 +83,7 @@ fun ChartPlotterApp(
                 viewModel = viewModel,
                 settingsViewModel = settingsViewModel,
                 trackViewModel = trackViewModel,
+                routeViewModel = routeViewModel,
                 activity = activity,
                 onMapLibreMapChange = onMapLibreMapChange,
                 onLocationManagerChange = onLocationManagerChange

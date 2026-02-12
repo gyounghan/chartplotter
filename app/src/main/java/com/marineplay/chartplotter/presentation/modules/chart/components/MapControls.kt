@@ -34,6 +34,7 @@ import android.util.Log
 @Composable
 fun MapControls(
     viewModel: MainViewModel,
+    isEditingRoute: Boolean = false,
     mapLibreMap: MapLibreMap?,
     locationManager: com.marineplay.chartplotter.LocationManager?,
     onZoomIn: () -> Unit,
@@ -174,7 +175,7 @@ fun MapControls(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 빠른 포인트 생성 버튼 (커서가 표시될 때만 보임, 경유지 추가 모드가 아닐 때)
-                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint && !mapUiState.isEditingRoute) {
+                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint && !isEditingRoute) {
                     FloatingActionButton(
                         onClick = {
                             android.util.Log.d("[MapControls]", "빠른 포인트 생성 버튼 클릭됨")
@@ -210,7 +211,7 @@ fun MapControls(
                 }
 
                 // 경유지 추가 버튼 (커서가 표시될 때만 보임, 경유지 추가 모드일 때)
-                if (mapUiState.showCursor && dialogUiState.isAddingWaypoint && !mapUiState.isEditingRoute) {
+                if (mapUiState.showCursor && dialogUiState.isAddingWaypoint && !isEditingRoute) {
                     FloatingActionButton(
                         onClick = onAddWaypoint,
                         shape = RoundedCornerShape(16.dp),
@@ -254,7 +255,7 @@ fun MapControls(
                 }
 
                 // 항해 버튼 (커서가 표시될 때만 보임, 경유지 추가 모드가 아닐 때)
-                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint && !mapUiState.isEditingRoute) {
+                if (mapUiState.showCursor && !dialogUiState.isAddingWaypoint && !isEditingRoute) {
                     FloatingActionButton(
                         onClick = onNavigate,
                         shape = RoundedCornerShape(16.dp),
@@ -276,7 +277,7 @@ fun MapControls(
                     }
                 }
 
-                if (!mapUiState.isEditingRoute) {
+                if (!isEditingRoute) {
                     // 메뉴 버튼
                     FloatingActionButton(
                         onClick = onMenuClick,

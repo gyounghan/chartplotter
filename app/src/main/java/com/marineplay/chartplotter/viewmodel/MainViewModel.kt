@@ -13,9 +13,7 @@ import kotlinx.coroutines.runBlocking
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.data.models.SavedPoint as DataSavedPoint
 import com.marineplay.chartplotter.data.models.Route
-import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.domain.repositories.PointRepository
-import com.marineplay.chartplotter.domain.repositories.RouteRepository
 import com.marineplay.chartplotter.domain.usecases.*
 import com.marineplay.chartplotter.LocationManager
 
@@ -55,11 +53,7 @@ data class MapUiState(
     val isZoomOutLongPressed: Boolean = false,
     val popupPosition: android.graphics.PointF? = null,
     val showSettingsScreen: Boolean = false, // 설정 화면 표시 여부
-    val selectedRoute: Route? = null, // 선택된 경로
-    val isEditingRoute: Boolean = false, // 경로 편집 중
-    val editingRoutePoints: List<RoutePoint> = emptyList(), // 편집 중인 경로 포인트
-    val currentNavigationRoute: Route? = null, // 현재 항해 중인 경로
-    val movingPointOrder: Int? = null // 위치 이동 중인 경로 점의 order (null이면 이동 모드 아님)
+    val currentNavigationRoute: Route? = null // 현재 항해 중인 경로
 )
 
 /**
@@ -101,8 +95,7 @@ data class DialogUiState(
     val showAdvancedDialog: Boolean = false,
     val showConnectionDialog: Boolean = false,
     val showInfoDialog: Boolean = false,
-    val showTrackLimitDialog: Boolean = false, // 항적 표시 제한 알림 다이얼로그
-    val showRouteCreateDialog: Boolean = false // 경로 생성 설명 다이얼로그
+    val showTrackLimitDialog: Boolean = false // 항적 표시 제한 알림 다이얼로그
 )
 
 /**
@@ -119,11 +112,9 @@ class MainViewModel(
     private val calculateDistanceUseCase: CalculateDistanceUseCase,
     private val mapRotationUseCase: MapRotationUseCase,
     private val zoomUseCase: ZoomUseCase,
-    private val routeUseCase: RouteUseCase,
     private val connectRouteToNavigationUseCase: ConnectRouteToNavigationUseCase,
     // Repository
     private val pointRepository: PointRepository,
-    private val routeRepository: RouteRepository,
 ) : ViewModel() {
     
     // ========== UI 상태 ==========
@@ -193,113 +184,6 @@ class MainViewModel(
     
     fun updateWaypoints(waypoints: List<SavedPoint>) {
         mapUiState = mapUiState.copy(waypoints = waypoints)
-    }
-    
-    // ========== Route 관련 함수 ==========
-    fun getAllRoutes(): List<Route> {
-        return routeUseCase.getAllRoutes()
-    }
-    
-    fun createRoute(name: String, points: List<RoutePoint>): Route {
-        return routeUseCase.createRoute(name, points)
-    }
-    
-    fun updateRoute(route: Route) {
-        routeUseCase.updateRoute(route)
-    }
-    
-    fun deleteRoute(routeId: String) {
-        routeUseCase.deleteRoute(routeId)
-    }
-    
-    fun selectRoute(route: Route?) {
-        mapUiState = mapUiState.copy(selectedRoute = route)
-    }
-    
-    fun setEditingRoute(isEditing: Boolean) {
-        android.util.Log.d("[MainViewModel]", "setEditingRoute 호출: $isEditing")
-        mapUiState = mapUiState.copy(isEditingRoute = isEditing)
-        android.util.Log.d("[MainViewModel]", "상태 업데이트 완료: isEditingRoute=${mapUiState.isEditingRoute}")
-    }
-    
-    fun setEditingRoutePoints(points: List<RoutePoint>) {
-        mapUiState = mapUiState.copy(editingRoutePoints = points)
-    }
-    
-    fun addPointToEditingRoute(latitude: Double, longitude: Double, name: String = "") {
-        val currentPoints = mapUiState.editingRoutePoints.toMutableList()
-        val newPoint = RoutePoint(
-            latitude = latitude,
-            longitude = longitude,
-            order = currentPoints.size,
-            name = name
-        )
-        currentPoints.add(newPoint)
-        mapUiState = mapUiState.copy(editingRoutePoints = currentPoints)
-    }
-    
-    fun removePointFromEditingRoute(order: Int) {
-        val currentPoints = mapUiState.editingRoutePoints.toMutableList()
-        currentPoints.removeAll { it.order == order }
-        val reorderedPoints = currentPoints.mapIndexed { index, point ->
-            point.copy(order = index)
-        }
-        mapUiState = mapUiState.copy(editingRoutePoints = reorderedPoints)
-    }
-    
-    /**
-     * 경로 편집 중 점의 위치 변경
-     */
-    fun updatePointInEditingRoute(order: Int, latitude: Double, longitude: Double) {
-        val currentPoints = mapUiState.editingRoutePoints.toMutableList()
-        val pointIndex = currentPoints.indexOfFirst { it.order == order }
-        if (pointIndex != -1) {
-            currentPoints[pointIndex] = currentPoints[pointIndex].copy(
-                latitude = latitude,
-                longitude = longitude
-            )
-            mapUiState = mapUiState.copy(editingRoutePoints = currentPoints)
-        }
-    }
-    
-    /**
-     * 경로 편집 중 점의 순서 변경 (위로 이동)
-     */
-    fun movePointUpInEditingRoute(order: Int) {
-        if (order <= 0) return
-        val sorted = mapUiState.editingRoutePoints.sortedBy { it.order }.toMutableList()
-        if (order >= sorted.size) return
-        
-        // swap
-        val current = sorted[order]
-        val previous = sorted[order - 1]
-        sorted[order - 1] = current.copy(order = order - 1)
-        sorted[order] = previous.copy(order = order)
-        
-        mapUiState = mapUiState.copy(editingRoutePoints = sorted)
-    }
-    
-    /**
-     * 경로 편집 중 점의 순서 변경 (아래로 이동)
-     */
-    fun movePointDownInEditingRoute(order: Int) {
-        val sorted = mapUiState.editingRoutePoints.sortedBy { it.order }.toMutableList()
-        if (order < 0 || order >= sorted.size - 1) return
-        
-        // swap
-        val current = sorted[order]
-        val next = sorted[order + 1]
-        sorted[order] = next.copy(order = order)
-        sorted[order + 1] = current.copy(order = order + 1)
-        
-        mapUiState = mapUiState.copy(editingRoutePoints = sorted)
-    }
-    
-    /**
-     * 경로 점 위치 이동 모드 설정/해제
-     */
-    fun setMovingPointOrder(order: Int?) {
-        mapUiState = mapUiState.copy(movingPointOrder = order)
     }
     
     /**
@@ -643,10 +527,6 @@ class MainViewModel(
         dialogUiState = dialogUiState.copy(showTrackLimitDialog = show)
     }
     
-    fun updateShowRouteCreateDialog(show: Boolean) {
-        dialogUiState = dialogUiState.copy(showRouteCreateDialog = show)
-    }
-    
     
     /**
      * 포인트 등록 다이얼로그 준비
@@ -755,7 +635,6 @@ class MainViewModel(
     companion object {
         fun provideFactory(
             pointRepository: PointRepository,
-            routeRepository: RouteRepository,
             locationManager: LocationManager?
         ): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
@@ -769,7 +648,6 @@ class MainViewModel(
                     val updatePointUseCase = UpdatePointUseCase(pointRepository)
                     val mapRotationUseCase = MapRotationUseCase(locationManager, calculateBearingUseCase)
                     val zoomUseCase = ZoomUseCase()
-                    val routeUseCase = RouteUseCase(routeRepository)
                     val connectRouteToNavigationUseCase = ConnectRouteToNavigationUseCase(calculateDistanceUseCase)
                     
                     return MainViewModel(
@@ -781,10 +659,8 @@ class MainViewModel(
                         calculateDistanceUseCase = calculateDistanceUseCase,
                         mapRotationUseCase = mapRotationUseCase,
                         zoomUseCase = zoomUseCase,
-                        routeUseCase = routeUseCase,
                         connectRouteToNavigationUseCase = connectRouteToNavigationUseCase,
-                        pointRepository = pointRepository,
-                        routeRepository = routeRepository
+                        pointRepository = pointRepository
                     ) as T
                 }
             }

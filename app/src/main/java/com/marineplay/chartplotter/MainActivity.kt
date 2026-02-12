@@ -135,6 +135,7 @@ import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.presentation.modules.chart.overlays.TidalCurrentOverlay
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -614,7 +615,6 @@ class MainActivity : ComponentActivity() {
                 val viewModel: MainViewModel = viewModel(
                     factory = MainViewModel.provideFactory(
                         pointRepository = pointRepository,
-                        routeRepository = routeRepository,
                         locationManager = locationManager
                     )
                 )
@@ -633,6 +633,12 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 
+                val routeViewModel: RouteViewModel = viewModel(
+                    factory = RouteViewModel.provideFactory(
+                        routeRepository = routeRepository
+                    )
+                )
+                
                 // onKeyDown에서 사용하기 위해 ViewModel 참조 저장
                 mainViewModel = viewModel
                 trackViewModelRef = trackViewModel
@@ -643,6 +649,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     settingsViewModel = settingsViewModel,
                     trackViewModel = trackViewModel,
+                    routeViewModel = routeViewModel,
                     activity = this@MainActivity,
                     onMapLibreMapChange = { map ->
                         mapLibreMap = map

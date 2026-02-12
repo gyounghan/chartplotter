@@ -34,6 +34,7 @@ import com.marineplay.chartplotter.presentation.modules.chart.components.MapOver
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.domain.mappers.PointMapper
 import com.marineplay.chartplotter.domain.usecases.UpdateNavigationRouteUseCase
@@ -83,6 +84,7 @@ fun ChartOnlyScreen(
     viewModel: MainViewModel,
     settingsViewModel: SettingsViewModel,
     trackViewModel: TrackViewModel,
+    routeViewModel: RouteViewModel,
     activity: ComponentActivity,
     onMapLibreMapChange: (MapLibreMap?) -> Unit = {},
     onLocationManagerChange: (LocationManager?) -> Unit = {}
@@ -657,6 +659,7 @@ fun ChartOnlyScreen(
     val mapUiState = viewModel.mapUiState
     val gpsUiState = viewModel.gpsUiState
     val trackUiState = trackViewModel.trackUiState
+    val routeUiState = routeViewModel.routeUiState
     val dialogUiState = viewModel.dialogUiState
 
     // 항적 상태 변화 관찰하여 자동으로 표시 업데이트 (디바운싱 적용)
@@ -1322,17 +1325,17 @@ fun ChartOnlyScreen(
 
     // 경로 편집 중: 점 추가 시 지도 업데이트
     val systemSettings = settingsViewModel.systemSettings
-    LaunchedEffect(mapUiState.isEditingRoute, mapUiState.editingRoutePoints) {
-        if (mapUiState.isEditingRoute && mapLibreMap != null) {
-            val editingPoints = mapUiState.editingRoutePoints
+    LaunchedEffect(routeUiState.isEditingRoute, routeUiState.editingRoutePoints) {
+        if (routeUiState.isEditingRoute && mapLibreMap != null) {
+            val editingPoints = routeUiState.editingRoutePoints
             if (editingPoints.isNotEmpty()) {
                 val routePoints = editingPoints.map { 
                     org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
                 }
-                val routeId = mapUiState.selectedRoute?.id ?: "editing_route"
+                val routeId = routeUiState.selectedRoute?.id ?: "editing_route"
                 
                 // 경로 편집 중에는 항상 표시, 편집 중이 아닐 때는 routeVisible 설정 확인
-                val shouldShowRoute = mapUiState.isEditingRoute || systemSettings.routeVisible
+                val shouldShowRoute = routeUiState.isEditingRoute || systemSettings.routeVisible
                 
                 if (shouldShowRoute) {
                     // 경로 선 업데이트 (2개 이상일 때만)
@@ -1356,7 +1359,7 @@ fun ChartOnlyScreen(
                     PMTilesLoader.removeRouteLine(map, "editing_route")
                 }
             }
-        } else if (!mapUiState.isEditingRoute) {
+        } else if (!routeUiState.isEditingRoute) {
             // 편집 모드가 종료되면 편집 중 경로 제거
             mapLibreMap?.let { map ->
                 PMTilesLoader.removeRouteLine(map, "editing_route")
@@ -1365,9 +1368,9 @@ fun ChartOnlyScreen(
     }
     
     // routeVisible 설정 변경 시 모든 경로 표시 업데이트
-    LaunchedEffect(systemSettings.routeVisible, mapUiState.isEditingRoute) {
-        if (!mapUiState.isEditingRoute && mapLibreMap != null) {
-            val allRoutes = viewModel.getAllRoutes()
+    LaunchedEffect(systemSettings.routeVisible, routeUiState.isEditingRoute) {
+        if (!routeUiState.isEditingRoute && mapLibreMap != null) {
+            val allRoutes = routeViewModel.getAllRoutes()
             if (systemSettings.routeVisible) {
                 // 모든 경로 표시
                 allRoutes.forEach { route ->
@@ -1390,8 +1393,8 @@ fun ChartOnlyScreen(
     
     // 경로 목록 변경 시 경로 표시 업데이트
     LaunchedEffect(Unit) {
-        if (mapLibreMap != null && systemSettings.routeVisible && !mapUiState.isEditingRoute) {
-            val allRoutes = viewModel.getAllRoutes()
+        if (mapLibreMap != null && systemSettings.routeVisible && !routeUiState.isEditingRoute) {
+            val allRoutes = routeViewModel.getAllRoutes()
             allRoutes.forEach { route ->
                 val routePoints = route.points.map { 
                     org.maplibre.android.geometry.LatLng(it.latitude, it.longitude) 
@@ -1406,9 +1409,9 @@ fun ChartOnlyScreen(
     
 
     // 경로 생성 설명 다이얼로그
-    if (dialogUiState.showRouteCreateDialog) {
+    if (routeUiState.showRouteCreateDialog) {
         AlertDialog(
-            onDismissRequest = { viewModel.updateShowRouteCreateDialog(false) },
+            onDismissRequest = { routeViewModel.updateShowRouteCreateDialog(false) },
             title = { Text("경로 생성") },
             text = {
                 Column {
@@ -1425,19 +1428,19 @@ fun ChartOnlyScreen(
                 Button(
                     onClick = {
                         Log.d("[ChartOnlyScreen]", "경로 생성 버튼 클릭 - 편집 모드 시작")
-                        viewModel.updateShowRouteCreateDialog(false)
+                        routeViewModel.updateShowRouteCreateDialog(false)
                         // 경로 편집 모드 시작
-                        viewModel.setEditingRoute(true)
-                        viewModel.setEditingRoutePoints(emptyList())
-                        viewModel.selectRoute(null)
-                        Log.d("[ChartOnlyScreen]", "편집 모드 설정 완료: isEditingRoute=${viewModel.mapUiState.isEditingRoute}")
+                        routeViewModel.setEditingRoute(true)
+                        routeViewModel.setEditingRoutePoints(emptyList())
+                        routeViewModel.selectRoute(null)
+                        Log.d("[ChartOnlyScreen]", "편집 모드 설정 완료: isEditingRoute=${routeViewModel.routeUiState.isEditingRoute}")
                     }
                 ) {
                     Text("생성")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.updateShowRouteCreateDialog(false) }) {
+                TextButton(onClick = { routeViewModel.updateShowRouteCreateDialog(false) }) {
                     Text("취소")
                 }
             }
@@ -2013,15 +2016,16 @@ fun ChartOnlyScreen(
                     map.addOnMapClickListener { latLng ->
                         // 경로 편집 모드인 경우: 위치 이동 / 기존 점 클릭 / 새 점 추가
                         // ✅ ViewModel에서 최신 상태를 직접 가져와서 클로저 캡처 문제 해결
+                        val currentRouteUiState = routeViewModel.routeUiState
                         val currentMapUiState = viewModel.mapUiState
-                        if (currentMapUiState.isEditingRoute) {
+                        if (currentRouteUiState.isEditingRoute) {
                             
                             // 1) 위치 이동 모드인 경우: 클릭한 곳으로 점 이동
-                            val movingOrder = currentMapUiState.movingPointOrder
+                            val movingOrder = currentRouteUiState.movingPointOrder
                             if (movingOrder != null) {
                                 Log.d("[ChartOnlyScreen]", "점 #${movingOrder + 1} 위치 이동: ${latLng.latitude}, ${latLng.longitude}")
-                                viewModel.updatePointInEditingRoute(movingOrder, latLng.latitude, latLng.longitude)
-                                viewModel.setMovingPointOrder(null)
+                                routeViewModel.updatePointInEditingRoute(movingOrder, latLng.latitude, latLng.longitude)
+                                routeViewModel.setMovingPointOrder(null)
                                 showRoutePointEditDialog = false
                                 selectedRoutePointForEdit = null
                                 return@addOnMapClickListener true
@@ -2029,7 +2033,7 @@ fun ChartOnlyScreen(
                             
                             // 2) 기존 경로 점 클릭 감지 (터치 위치 근처에 기존 점이 있는지 확인)
                             val screenPoint = map.projection.toScreenLocation(latLng)
-                            val editingPoints = currentMapUiState.editingRoutePoints.sortedBy { it.order }
+                            val editingPoints = currentRouteUiState.editingRoutePoints.sortedBy { it.order }
                             var clickedExistingPoint: RoutePoint? = null
                             
                             for (point in editingPoints) {
@@ -2052,8 +2056,8 @@ fun ChartOnlyScreen(
                             } else {
                                 // 3) 빈 곳 클릭 → 새 점 추가
                                 Log.d("[ChartOnlyScreen]", "지도 클릭 - 경로 편집 모드: ${latLng.latitude}, ${latLng.longitude}")
-                                viewModel.addPointToEditingRoute(latLng.latitude, latLng.longitude)
-                                Log.d("[ChartOnlyScreen]", "점 추가 완료: 총 ${viewModel.mapUiState.editingRoutePoints.size}개")
+                                routeViewModel.addPointToEditingRoute(latLng.latitude, latLng.longitude)
+                                Log.d("[ChartOnlyScreen]", "점 추가 완료: 총 ${routeViewModel.routeUiState.editingRoutePoints.size}개")
                             }
                             
                             // 십자가 커서 표시하지 않음
@@ -2271,10 +2275,10 @@ fun ChartOnlyScreen(
         }
 
         // 경로 편집 중 배너 (상단 표시) - 다른 오버레이 위에 표시
-        if (mapUiState.isEditingRoute) {
-            Log.d("[ChartOnlyScreen]", "경로 편집 배너 표시: isEditingRoute=${mapUiState.isEditingRoute}, points=${mapUiState.editingRoutePoints.size}")
+        if (routeUiState.isEditingRoute) {
+            Log.d("[ChartOnlyScreen]", "경로 편집 배너 표시: isEditingRoute=${routeUiState.isEditingRoute}, points=${routeUiState.editingRoutePoints.size}")
             var showNameDialog by remember { mutableStateOf(false) }
-            var routeName by remember { mutableStateOf(mapUiState.selectedRoute?.name ?: "Route ${viewModel.getAllRoutes().size + 1}") }
+            var routeName by remember { mutableStateOf(routeUiState.selectedRoute?.name ?: "Route ${routeViewModel.getAllRoutes().size + 1}") }
             
             Box(
                 modifier = Modifier
@@ -2306,7 +2310,7 @@ fun ChartOnlyScreen(
                                 fontSize = 16.sp
                             )
                             Text(
-                                "지도를 클릭하여 점을 추가하세요 (${mapUiState.editingRoutePoints.size}개)",
+                                "지도를 클릭하여 점을 추가하세요 (${routeUiState.editingRoutePoints.size}개)",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(top = 4.dp)
@@ -2315,11 +2319,11 @@ fun ChartOnlyScreen(
                         Row {
                             Button(
                                 onClick = {
-                                    if (mapUiState.editingRoutePoints.size >= 2) {
+                                    if (routeUiState.editingRoutePoints.size >= 2) {
                                         showNameDialog = true
                                     }
                                 },
-                                enabled = mapUiState.editingRoutePoints.size >= 2,
+                                enabled = routeUiState.editingRoutePoints.size >= 2,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color.Green
                                 )
@@ -2329,13 +2333,13 @@ fun ChartOnlyScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             TextButton(
                                 onClick = {
-                                    viewModel.setEditingRoute(false)
-                                    viewModel.setEditingRoutePoints(emptyList())
-                                    viewModel.selectRoute(null)
+                                    routeViewModel.setEditingRoute(false)
+                                    routeViewModel.setEditingRoutePoints(emptyList())
+                                    routeViewModel.selectRoute(null)
                                     // 편집 중인 경로 선 제거
                                     mapLibreMap?.let { map ->
                                         PMTilesLoader.removeRouteLine(map, "editing_route")
-                                        mapUiState.selectedRoute?.id?.let { routeId ->
+                                        routeUiState.selectedRoute?.id?.let { routeId ->
                                             PMTilesLoader.removeRouteLine(map, routeId)
                                         }
                                     }
@@ -2364,15 +2368,15 @@ fun ChartOnlyScreen(
                     confirmButton = {
                         Button(
                             onClick = {
-                                if (routeName.isNotBlank() && mapUiState.editingRoutePoints.size >= 2) {
-                                    if (mapUiState.selectedRoute != null) {
+                                if (routeName.isNotBlank() && routeUiState.editingRoutePoints.size >= 2) {
+                                    if (routeUiState.selectedRoute != null) {
                                         // 기존 경로 업데이트
-                                        val updatedRoute = mapUiState.selectedRoute.copy(
+                                        val updatedRoute = routeUiState.selectedRoute.copy(
                                             name = routeName,
-                                            points = mapUiState.editingRoutePoints,
+                                            points = routeUiState.editingRoutePoints,
                                             updatedAt = System.currentTimeMillis()
                                         )
-                                        viewModel.updateRoute(updatedRoute)
+                                        routeViewModel.updateRoute(updatedRoute)
                                         // 지도에 경로 표시
                                         mapLibreMap?.let { map ->
                                             val routePoints = updatedRoute.points.map { 
@@ -2382,7 +2386,7 @@ fun ChartOnlyScreen(
                                         }
                                     } else {
                                         // 새 경로 생성
-                                        val newRoute = viewModel.createRoute(routeName, mapUiState.editingRoutePoints)
+                                        val newRoute = routeViewModel.createRoute(routeName, routeUiState.editingRoutePoints)
                                         // 지도에 경로 표시
                                         mapLibreMap?.let { map ->
                                             val routePoints = newRoute.points.map { 
@@ -2393,12 +2397,12 @@ fun ChartOnlyScreen(
                                     }
                                     // 편집 중 표시된 경로 선과 점 마커 제거
                                     mapLibreMap?.let { map ->
-                                        val routeId = mapUiState.selectedRoute?.id ?: "editing_route"
+                                        val routeId = routeUiState.selectedRoute?.id ?: "editing_route"
                                         PMTilesLoader.removeRouteLine(map, routeId)
                                     }
-                                    viewModel.setEditingRoute(false)
-                                    viewModel.setEditingRoutePoints(emptyList())
-                                    viewModel.selectRoute(null)
+                                    routeViewModel.setEditingRoute(false)
+                                    routeViewModel.setEditingRoutePoints(emptyList())
+                                    routeViewModel.selectRoute(null)
                                     showNameDialog = false
                                 }
                             },
@@ -2416,7 +2420,7 @@ fun ChartOnlyScreen(
             }
             
             // 경로 점 편집 다이얼로그 (위치 이동 모드가 아닐 때만 표시)
-            if (showRoutePointEditDialog && selectedRoutePointForEdit != null && mapUiState.movingPointOrder == null) {
+            if (showRoutePointEditDialog && selectedRoutePointForEdit != null && routeUiState.movingPointOrder == null) {
                 val point = selectedRoutePointForEdit!!
                 
                 AlertDialog(
@@ -2444,7 +2448,7 @@ fun ChartOnlyScreen(
                             // 위치 이동 버튼 (지도 터치) → ViewModel에 movingPointOrder 설정
                             Button(
                                 onClick = {
-                                    viewModel.setMovingPointOrder(point.order)
+                                    routeViewModel.setMovingPointOrder(point.order)
                                     // 다이얼로그를 닫으면, 다음 클릭이 기존 리스너에서 위치 이동으로 처리됨
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -2466,7 +2470,7 @@ fun ChartOnlyScreen(
                             ) {
                                 Button(
                                     onClick = {
-                                        viewModel.movePointUpInEditingRoute(point.order)
+                                        routeViewModel.movePointUpInEditingRoute(point.order)
                                         showRoutePointEditDialog = false
                                         selectedRoutePointForEdit = null
                                     },
@@ -2477,11 +2481,11 @@ fun ChartOnlyScreen(
                                 }
                                 Button(
                                     onClick = {
-                                        viewModel.movePointDownInEditingRoute(point.order)
+                                        routeViewModel.movePointDownInEditingRoute(point.order)
                                         showRoutePointEditDialog = false
                                         selectedRoutePointForEdit = null
                                     },
-                                    enabled = point.order < mapUiState.editingRoutePoints.size - 1,
+                                    enabled = point.order < routeUiState.editingRoutePoints.size - 1,
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text("▼ 아래로")
@@ -2493,7 +2497,7 @@ fun ChartOnlyScreen(
                         // 삭제 버튼
                         Button(
                             onClick = {
-                                viewModel.removePointFromEditingRoute(point.order)
+                                routeViewModel.removePointFromEditingRoute(point.order)
                                 showRoutePointEditDialog = false
                                 selectedRoutePointForEdit = null
                             },
@@ -2516,8 +2520,8 @@ fun ChartOnlyScreen(
             }
             
             // 위치 이동 모드 안내 배너 (movingPointOrder가 설정되었을 때)
-            if (mapUiState.movingPointOrder != null) {
-                val movingOrder = mapUiState.movingPointOrder!!
+            if (routeUiState.movingPointOrder != null) {
+                val movingOrder = routeUiState.movingPointOrder!!
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -2556,7 +2560,7 @@ fun ChartOnlyScreen(
                             }
                             TextButton(
                                 onClick = {
-                                    viewModel.setMovingPointOrder(null)
+                                    routeViewModel.setMovingPointOrder(null)
                                 }
                             ) {
                                 Text("취소", color = Color.White, fontSize = 14.sp)
@@ -2572,6 +2576,7 @@ fun ChartOnlyScreen(
             viewModel = viewModel,
             settingsViewModel = settingsViewModel,
             trackViewModel = trackViewModel,
+            routeViewModel = routeViewModel,
             mapLibreMap = mapLibreMap,
             locationManager = locationManager,
             loadPointsFromLocal = { loadPointsFromLocal() },
@@ -2587,6 +2592,7 @@ fun ChartOnlyScreen(
         // 지도 컨트롤 버튼들
         MapControls(
             viewModel = viewModel,
+            isEditingRoute = routeUiState.isEditingRoute,
             mapLibreMap = mapLibreMap,
             locationManager = locationManager,
             onZoomIn = { viewModel.zoomIn(mapLibreMap) },

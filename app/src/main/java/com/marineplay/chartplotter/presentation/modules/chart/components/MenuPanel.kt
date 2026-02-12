@@ -27,6 +27,7 @@ import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
 import com.marineplay.chartplotter.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.PMTilesLoader
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.geometry.LatLng
@@ -44,6 +45,7 @@ fun MenuPanel(
     viewModel: MainViewModel,
     settingsViewModel: SettingsViewModel,
     trackViewModel: TrackViewModel,
+    routeViewModel: RouteViewModel,
     mapLibreMap: MapLibreMap?,
     locationManager: LocationManager?,
     loadPointsFromLocal: () -> List<SavedPoint>,
@@ -54,6 +56,7 @@ fun MenuPanel(
 ) {
     val mapUiState = viewModel.mapUiState
     val trackUiState = trackViewModel.trackUiState
+    val routeUiState = routeViewModel.routeUiState
 
     if (mapUiState.showMenu) {
         Box(
@@ -136,6 +139,7 @@ fun MenuPanel(
                     if (mapUiState.currentMenu == "navigation") {
                         MenuNavigationContent(
                             viewModel = viewModel,
+                            routeViewModel = routeViewModel,
                             mapLibreMap = mapLibreMap,
                             loadPointsFromLocal = loadPointsFromLocal,
                             locationManager = locationManager
@@ -171,6 +175,7 @@ fun MenuPanel(
                     if (mapUiState.currentMenu == "route") {
                         MenuRouteContent(
                             viewModel = viewModel,
+                            routeViewModel = routeViewModel,
                             settingsViewModel = settingsViewModel,
                             mapLibreMap = mapLibreMap,
                             locationManager = locationManager
@@ -305,16 +310,17 @@ private fun MenuPointContent(
 @Composable
 private fun MenuNavigationContent(
     viewModel: MainViewModel,
+    routeViewModel: RouteViewModel,
     mapLibreMap: MapLibreMap?,
     loadPointsFromLocal: () -> List<SavedPoint>,
     locationManager: LocationManager?
 ) {
     val mapUiState = viewModel.mapUiState
-    val routes = remember { mutableStateOf(viewModel.getAllRoutes()) }
+    val routes = remember { mutableStateOf(routeViewModel.getAllRoutes()) }
     
     // 경로 목록 새로고침
     LaunchedEffect(Unit) {
-        routes.value = viewModel.getAllRoutes()
+        routes.value = routeViewModel.getAllRoutes()
     }
     
     Text(
@@ -622,16 +628,17 @@ private fun MenuDisplayContent(
 @Composable
 private fun MenuRouteContent(
     viewModel: MainViewModel,
+    routeViewModel: RouteViewModel,
     settingsViewModel: SettingsViewModel,
     mapLibreMap: MapLibreMap?,
     locationManager: LocationManager?
 ) {
     val mapUiState = viewModel.mapUiState
-    val routes = remember { mutableStateOf(viewModel.getAllRoutes()) }
+    val routes = remember { mutableStateOf(routeViewModel.getAllRoutes()) }
     
     // 경로 목록 새로고침
     LaunchedEffect(Unit) {
-        routes.value = viewModel.getAllRoutes()
+        routes.value = routeViewModel.getAllRoutes()
     }
     
     Text(
@@ -641,7 +648,7 @@ private fun MenuRouteContent(
             .padding(vertical = 8.dp)
             .clickable {
                 // 경로 생성 설명 다이얼로그 표시
-                viewModel.updateShowRouteCreateDialog(true)
+                routeViewModel.updateShowRouteCreateDialog(true)
                 viewModel.updateShowMenu(false)
                 viewModel.updateCurrentMenu("main")
             },
@@ -721,9 +728,9 @@ private fun MenuRouteContent(
                             // 편집
                             IconButton(
                                 onClick = {
-                                    viewModel.selectRoute(route)
-                                    viewModel.setEditingRoute(true)
-                                    viewModel.setEditingRoutePoints(route.points)
+                                    routeViewModel.selectRoute(route)
+                                    routeViewModel.setEditingRoute(true)
+                                    routeViewModel.setEditingRoutePoints(route.points)
                                     viewModel.updateShowMenu(false)
                                     viewModel.updateCurrentMenu("main")
                                 }
@@ -738,8 +745,8 @@ private fun MenuRouteContent(
                             // 삭제
                             IconButton(
                                 onClick = {
-                                    viewModel.deleteRoute(route.id)
-                                    routes.value = viewModel.getAllRoutes()
+                                    routeViewModel.deleteRoute(route.id)
+                                    routes.value = routeViewModel.getAllRoutes()
                                     // 지도에서도 제거
                                     mapLibreMap?.let { map ->
                                         PMTilesLoader.removeRouteLine(map, route.id)
