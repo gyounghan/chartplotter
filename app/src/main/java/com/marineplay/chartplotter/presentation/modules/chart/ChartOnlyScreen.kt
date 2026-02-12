@@ -33,6 +33,7 @@ import com.marineplay.chartplotter.presentation.modules.chart.components.MenuPan
 import com.marineplay.chartplotter.presentation.modules.chart.components.MapOverlays
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.viewmodel.TrackViewModel
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.domain.mappers.PointMapper
 import com.marineplay.chartplotter.domain.usecases.UpdateNavigationRouteUseCase
@@ -81,6 +82,7 @@ import androidx.compose.runtime.collectAsState
 fun ChartOnlyScreen(
     viewModel: MainViewModel,
     settingsViewModel: SettingsViewModel,
+    trackViewModel: TrackViewModel,
     activity: ComponentActivity,
     onMapLibreMapChange: (MapLibreMap?) -> Unit = {},
     onLocationManagerChange: (LocationManager?) -> Unit = {}
@@ -359,7 +361,7 @@ fun ChartOnlyScreen(
     }
 
     fun updateCurrentTrackDisplay() {
-        val trackUiState = viewModel.trackUiState
+        val trackUiState = trackViewModel.trackUiState
 
         mapLibreMap?.let { map ->
             // 배치 업데이트: 한 번의 getStyle 콜백에서 모든 항적 처리 (성능 최적화)
@@ -367,7 +369,7 @@ fun ChartOnlyScreen(
                 // 여러 항적 동시 기록 지원: 각 항적마다 별도의 소스 ID 사용
                 trackUiState.recordingTracks.forEach { (trackId, recordingState) ->
                     // 항적 정보 가져오기 (캐시 사용으로 최적화됨)
-                    val track = viewModel.getTrack(trackId) ?: return@forEach
+                    val track = trackViewModel.getTrack(trackId) ?: return@forEach
                     
                     // 화면에 표시할 최대 점 수 제한 (성능 최적화: 최근 2000개만 표시)
                     val displayPoints = if (recordingState.points.size > 2000) {
@@ -413,11 +415,11 @@ fun ChartOnlyScreen(
         mapLibreMap?.let { map ->
             PMTilesLoader.removeAllTracks(map)
 
-            val trackUiState = viewModel.trackUiState
+            val trackUiState = trackViewModel.trackUiState
             val highlightedRecord = trackUiState.highlightedTrackRecord
             
             // 모든 항적을 표시하되, 하이라이트된 항적만 효과를 부여
-            val tracksToDisplay = viewModel.getTracks().filter { it.isVisible }
+            val tracksToDisplay = trackViewModel.getTracks().filter { it.isVisible }
             tracksToDisplay.forEach { track ->
                 val isHighlighted = highlightedRecord != null &&
                         highlightedRecord.first == track.id &&
@@ -605,7 +607,7 @@ fun ChartOnlyScreen(
     }
 
     fun addTrackPointIfNeeded(latitude: Double, longitude: Double) {
-        val newPoint = viewModel.addTrackPointIfNeeded(latitude, longitude)
+        val newPoint = trackViewModel.addTrackPointIfNeeded(latitude, longitude)
         if (newPoint != null) {
             updateCurrentTrackDisplay()
         }
@@ -654,7 +656,7 @@ fun ChartOnlyScreen(
     val pointUiState = viewModel.pointUiState
     val mapUiState = viewModel.mapUiState
     val gpsUiState = viewModel.gpsUiState
-    val trackUiState = viewModel.trackUiState
+    val trackUiState = trackViewModel.trackUiState
     val dialogUiState = viewModel.dialogUiState
 
     // 항적 상태 변화 관찰하여 자동으로 표시 업데이트 (디바운싱 적용)
@@ -665,10 +667,10 @@ fun ChartOnlyScreen(
         
         // 앱 시작 시 자동 기록을 위한 타이머 시작 (isRecording=true인 항적에 대해서만)
         trackUiState.recordingTracks.forEach { (trackId, recordingState) ->
-            val track = viewModel.getTracks().find { it.id == trackId }
+            val track = trackViewModel.getTracks().find { it.id == trackId }
             if (track != null && track.intervalType == "time") {
                 // MainActivity의 타이머 시작
-                (activity as MainActivity).startTrackTimerForAutoRecording(track, viewModel)
+                (activity as MainActivity).startTrackTimerForAutoRecording(track, trackViewModel)
             }
         }
     }
@@ -761,7 +763,7 @@ fun ChartOnlyScreen(
         AlertDialog(
             onDismissRequest = {
                 viewModel.updateShowTrackSettingsDialog(false)
-                viewModel.updateSelectedTrackForSettings(null)
+                trackViewModel.updateSelectedTrackForSettings(null)
             },
             title = { Text("${track.name} 설정") },
             text = {
@@ -818,7 +820,7 @@ fun ChartOnlyScreen(
                         }
                         
                         kotlinx.coroutines.runBlocking {
-                            viewModel.updateTrackSettings(
+                            trackViewModel.updateTrackSettings(
                                 track.id,
                                 intervalType,
                                 timeInterval,
@@ -826,7 +828,7 @@ fun ChartOnlyScreen(
                             )
                         }
                         viewModel.updateShowTrackSettingsDialog(false)
-                        viewModel.updateSelectedTrackForSettings(null)
+                        trackViewModel.updateSelectedTrackForSettings(null)
                         updateTrackDisplay()
                     }
                 ) {
@@ -837,7 +839,7 @@ fun ChartOnlyScreen(
                 TextButton(
                     onClick = {
                         viewModel.updateShowTrackSettingsDialog(false)
-                        viewModel.updateSelectedTrackForSettings(null)
+                        trackViewModel.updateSelectedTrackForSettings(null)
                     }
                 ) {
                     Text("취소")
@@ -869,7 +871,7 @@ fun ChartOnlyScreen(
 
                     // 항적 목록
                     LazyColumn {
-                        items(viewModel.getTracks()) { track ->
+                        items(trackViewModel.getTracks()) { track ->
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -929,20 +931,21 @@ fun ChartOnlyScreen(
                                                 Switch(
                                                     checked = track.isVisible,
                                                     onCheckedChange = {
-                                                        val success = viewModel.setTrackVisibility(
+                                                        val success = trackViewModel.setTrackVisibility(
                                                             track.id,
                                                             it
-                                                        )
+                                                        ) {
+                                                            viewModel.updateShowTrackLimitDialog(true)
+                                                        }
                                                         if (success) {
                                                             updateTrackDisplay()
                                                         }
-                                                        // 실패 시 (제한 초과) 다이얼로그는 ViewModel에서 표시됨
                                                     }
                                                 )
                                             }
 
                                             // 기록 on/off 스위치 (단일 항적만 기록 가능)
-                                            val isRecording = viewModel.trackUiState.recordingTracks.containsKey(track.id)
+                                            val isRecording = trackViewModel.trackUiState.recordingTracks.containsKey(track.id)
                                             Column(
                                                 horizontalAlignment = Alignment.CenterHorizontally,
                                                 modifier = Modifier.width(60.dp)
@@ -956,7 +959,7 @@ fun ChartOnlyScreen(
                                                     checked = isRecording,
                                                     onCheckedChange = {
                                                         // 기록 시작/중지: 다른 항적이 기록 중이면 자동으로 중지되고 저장됨
-                                                        viewModel.toggleTrackRecording(track.id)
+                                                        trackViewModel.toggleTrackRecording(track.id)
                                                         updateTrackDisplay()
                                                     }
                                                 )
@@ -966,7 +969,7 @@ fun ChartOnlyScreen(
                                             TextButton(
                                                 onClick = {
                                                     // 항적 설정 다이얼로그 표시
-                                                    viewModel.updateSelectedTrackForSettings(track)
+                                                    trackViewModel.updateSelectedTrackForSettings(track)
                                                     viewModel.updateShowTrackSettingsDialog(true)
                                                 }
                                             ) {
@@ -977,9 +980,9 @@ fun ChartOnlyScreen(
                                             TextButton(
                                                 onClick = {
                                                     if (isRecording) {
-                                                        viewModel.stopTrackRecording(track.id)
+                                                        trackViewModel.stopTrackRecording(track.id)
                                                     }
-                                                    viewModel.deleteTrack(track.id)
+                                                    trackViewModel.deleteTrack(track.id)
                                                     updateTrackDisplay()
                                                 }
                                             ) {
@@ -991,7 +994,7 @@ fun ChartOnlyScreen(
                                     // 항적 날짜 목록
                                     val trackDates = remember(track.id) {
                                         kotlinx.coroutines.runBlocking {
-                                            viewModel.getDatesByTrackId(track.id)
+                                            trackViewModel.getDatesByTrackId(track.id)
                                         }
                                     }
                                     if (trackDates.isNotEmpty()) {
@@ -1018,10 +1021,10 @@ fun ChartOnlyScreen(
                                                     onClick = {
                                                         if (isCurrentlyHighlighted) {
                                                             // 이미 하이라이트된 경우: 취소
-                                                            viewModel.updateHighlightedTrackRecord(null)
+                                                            trackViewModel.updateHighlightedTrackRecord(null)
                                                         } else {
                                                             // 하이라이트 처리 (날짜별)
-                                                            viewModel.updateHighlightedTrackRecord(
+                                                            trackViewModel.updateHighlightedTrackRecord(
                                                                 Pair(track.id, date)
                                                             )
                                                         }
@@ -1036,7 +1039,7 @@ fun ChartOnlyScreen(
                                                 }
                                                 TextButton(
                                                     onClick = {
-                                                        viewModel.deleteTrackPointsByDate(
+                                                        trackViewModel.deleteTrackPointsByDate(
                                                             track.id,
                                                             date
                                                         )
@@ -1158,7 +1161,7 @@ fun ChartOnlyScreen(
                                 } else {
                                     10.0
                                 }
-                                viewModel.addTrack(
+                                trackViewModel.addTrack(
                                     newTrackName, 
                                     newTrackColor,
                                     intervalType,
@@ -1210,14 +1213,14 @@ fun ChartOnlyScreen(
     if (dialogUiState.showTrackRecordListDialog && trackUiState.selectedTrackForRecords != null) {
         val trackDates = remember(trackUiState.selectedTrackForRecords!!.id) {
             kotlinx.coroutines.runBlocking {
-                viewModel.getDatesByTrackId(trackUiState.selectedTrackForRecords!!.id)
+                trackViewModel.getDatesByTrackId(trackUiState.selectedTrackForRecords!!.id)
             }
         }
         
         AlertDialog(
             onDismissRequest = {
                 viewModel.updateShowTrackRecordListDialog(false)
-                viewModel.updateSelectedTrackForRecords(null)
+                trackViewModel.updateSelectedTrackForRecords(null)
             },
             title = { Text("${trackUiState.selectedTrackForRecords!!.name} - 날짜별 항적") },
             text = {
@@ -1229,7 +1232,7 @@ fun ChartOnlyScreen(
                         
                         val pointsCount = remember(date) {
                             kotlinx.coroutines.runBlocking {
-                                viewModel.getTrackPointsByDate(trackUiState.selectedTrackForRecords!!.id, date).size
+                                trackViewModel.getTrackPointsByDate(trackUiState.selectedTrackForRecords!!.id, date).size
                             }
                         }
                         
@@ -1240,10 +1243,10 @@ fun ChartOnlyScreen(
                                 .clickable {
                                     if (isHighlighted) {
                                         // 이미 하이라이트된 경우: 취소
-                                        viewModel.updateHighlightedTrackRecord(null)
+                                        trackViewModel.updateHighlightedTrackRecord(null)
                                     } else {
                                         // 하이라이트 처리
-                                        viewModel.updateHighlightedTrackRecord(
+                                        trackViewModel.updateHighlightedTrackRecord(
                                             Pair(
                                                 trackUiState.selectedTrackForRecords!!.id,
                                                 date
@@ -1298,7 +1301,7 @@ fun ChartOnlyScreen(
                     TextButton(
                         onClick = {
                             // 하이라이트 해제
-                            viewModel.updateHighlightedTrackRecord(null)
+                            trackViewModel.updateHighlightedTrackRecord(null)
                             updateTrackDisplay()
                         }
                     ) {
@@ -1307,7 +1310,7 @@ fun ChartOnlyScreen(
                     TextButton(
                         onClick = {
                             viewModel.updateShowTrackRecordListDialog(false)
-                            viewModel.updateSelectedTrackForRecords(null)
+                            trackViewModel.updateSelectedTrackForRecords(null)
                         }
                     ) {
                         Text("닫기")
@@ -1810,7 +1813,7 @@ fun ChartOnlyScreen(
 
                             // 항적 기록 점 추가 (MainActivity의 addTrackPointIfNeeded 호출)
                             if (activity is MainActivity) {
-                                (activity as MainActivity).addTrackPointIfNeeded(lat, lng, viewModel)
+                                (activity as MainActivity).addTrackPointIfNeeded(lat, lng, trackViewModel)
                             } else {
                                 // MainActivity가 아닌 경우 기본 처리
                                 addTrackPointIfNeeded(lat, lng)
@@ -2568,6 +2571,7 @@ fun ChartOnlyScreen(
         MenuPanel(
             viewModel = viewModel,
             settingsViewModel = settingsViewModel,
+            trackViewModel = trackViewModel,
             mapLibreMap = mapLibreMap,
             locationManager = locationManager,
             loadPointsFromLocal = { loadPointsFromLocal() },

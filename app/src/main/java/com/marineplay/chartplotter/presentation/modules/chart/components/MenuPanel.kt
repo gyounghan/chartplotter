@@ -26,6 +26,7 @@ import com.marineplay.chartplotter.data.models.Route
 import com.marineplay.chartplotter.data.models.RoutePoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.viewmodel.TrackViewModel
 import com.marineplay.chartplotter.PMTilesLoader
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.geometry.LatLng
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 fun MenuPanel(
     viewModel: MainViewModel,
     settingsViewModel: SettingsViewModel,
+    trackViewModel: TrackViewModel,
     mapLibreMap: MapLibreMap?,
     locationManager: LocationManager?,
     loadPointsFromLocal: () -> List<SavedPoint>,
@@ -51,7 +53,7 @@ fun MenuPanel(
     activity: ComponentActivity? = null
 ) {
     val mapUiState = viewModel.mapUiState
-    val trackUiState = viewModel.trackUiState
+    val trackUiState = trackViewModel.trackUiState
 
     if (mapUiState.showMenu) {
         Box(
@@ -144,6 +146,7 @@ fun MenuPanel(
                     if (mapUiState.currentMenu == "track") {
                         MenuTrackContent(
                             viewModel = viewModel,
+                            trackViewModel = trackViewModel,
                             trackUiState = trackUiState,
                             updateTrackDisplay = updateTrackDisplay
                         )
@@ -481,6 +484,7 @@ private fun MenuNavigationContent(
 @Composable
 private fun MenuTrackContent(
     viewModel: MainViewModel,
+    trackViewModel: TrackViewModel,
     trackUiState: com.marineplay.chartplotter.viewmodel.TrackUiState,
     updateTrackDisplay: () -> Unit
 ) {
@@ -507,7 +511,7 @@ private fun MenuTrackContent(
                 .clickable {
                     val currentTrack = trackUiState.currentRecordingTrack
                     if (currentTrack != null) {
-                        viewModel.stopTrackRecording(currentTrack.id)
+                        trackViewModel.stopTrackRecording(currentTrack.id)
                         updateTrackDisplay()
                     }
                     viewModel.updateShowMenu(false)

@@ -134,6 +134,7 @@ import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
 import com.marineplay.chartplotter.viewmodel.MainViewModel
 import com.marineplay.chartplotter.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.viewmodel.TrackViewModel
 import com.marineplay.chartplotter.presentation.modules.chart.overlays.TidalCurrentOverlay
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -181,6 +182,7 @@ class MainActivity : ComponentActivity() {
     
     // ViewModel 참조 (onKeyDown에서 사용하기 위해)
     private var mainViewModel: MainViewModel? = null
+    private var trackViewModelRef: TrackViewModel? = null
 
     // 조류(샘플 CSV) 오버레이
     private var tidalCurrentOverlay: TidalCurrentOverlay? = null
@@ -289,26 +291,26 @@ class MainActivity : ComponentActivity() {
     }
     
     // 항적 기록 시작 (단일 항적만 기록 가능)
-    private fun startTrackRecording(track: Track, viewModel: MainViewModel) {
+    private fun startTrackRecording(track: Track, trackViewModel: TrackViewModel) {
         // 기존에 기록 중인 항적이 있으면 타이머 정지
-        val currentRecordingTracks = viewModel.trackUiState.recordingTracks
+        val currentRecordingTracks = trackViewModel.trackUiState.recordingTracks
         currentRecordingTracks.keys.forEach { existingTrackId ->
-            stopTrackRecording(existingTrackId, viewModel)
+            stopTrackRecording(existingTrackId, trackViewModel)
         }
         
         // ViewModel에서 기록 시작 (기존 항적은 자동으로 중지됨)
-        viewModel.startTrackRecording(track)
+        trackViewModel.startTrackRecording(track)
         
         // 시간 간격 설정인 경우 타이머 시작
         if (track.intervalType == "time") {
-            startTrackTimer(track.id, track.timeInterval, viewModel)
+            startTrackTimer(track.id, track.timeInterval, trackViewModel)
         }
         
         Log.d("[MainActivity]", "항적 기록 시작: ${track.name} (간격: ${if (track.intervalType == "time") "${track.timeInterval}ms" else "${track.distanceInterval}m"})")
     }
     
     // 항적 타이머 시작
-    private fun startTrackTimer(trackId: String, timeInterval: Long, viewModel: MainViewModel) {
+    private fun startTrackTimer(trackId: String, timeInterval: Long, trackViewModel: TrackViewModel) {
         // 이미 타이머가 실행 중이면 시작하지 않음
         if (trackTimerHandlers.containsKey(trackId) && trackTimerRunnables.containsKey(trackId)) {
             Log.d("[MainActivity]", "타이머가 이미 실행 중입니다: $trackId")
@@ -318,16 +320,16 @@ class MainActivity : ComponentActivity() {
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val runnable = object : Runnable {
                 override fun run() {
-                    val trackUiState = viewModel.trackUiState
-                    val gpsUiState = viewModel.gpsUiState
+                    val trackUiState = trackViewModel.trackUiState
+                    val gpsUiState = mainViewModel?.gpsUiState
                 val recordingState = trackUiState.recordingTracks[trackId]
                 
-                if (recordingState != null && gpsUiState.lastGpsLocation != null) {
+                if (recordingState != null && gpsUiState?.lastGpsLocation != null) {
                         // 마지막 GPS 위치를 항적 점으로 추가
                         val lastGpsLocation = gpsUiState.lastGpsLocation!!
                         
                     // ViewModel을 통해 점 추가 (타이머에서 호출되었음을 표시)
-                    viewModel.addTrackPointIfNeeded(lastGpsLocation.latitude, lastGpsLocation.longitude, isTimerTriggered = true)
+                    trackViewModel.addTrackPointIfNeeded(lastGpsLocation.latitude, lastGpsLocation.longitude, isTimerTriggered = true)
                         
                         // 다음 타이머 예약
                     handler.postDelayed(this, timeInterval)
@@ -346,15 +348,15 @@ class MainActivity : ComponentActivity() {
     }
     
     // 앱 시작 시 자동 기록을 위한 타이머 시작 (외부에서 호출 가능)
-    fun startTrackTimerForAutoRecording(track: Track, viewModel: MainViewModel) {
+    fun startTrackTimerForAutoRecording(track: Track, trackViewModel: TrackViewModel) {
         if (track.intervalType == "time") {
-            startTrackTimer(track.id, track.timeInterval, viewModel)
+            startTrackTimer(track.id, track.timeInterval, trackViewModel)
         }
     }
     
     // 항적 기록 중지 (특정 항적)
-    private fun stopTrackRecording(trackId: String? = null, viewModel: MainViewModel) {
-        val targetTrackId = trackId ?: viewModel.trackUiState.currentRecordingTrack?.id
+    private fun stopTrackRecording(trackId: String? = null, trackViewModel: TrackViewModel) {
+        val targetTrackId = trackId ?: trackViewModel.trackUiState.currentRecordingTrack?.id
         if (targetTrackId == null) return
         
         // 타이머 정지
@@ -365,35 +367,35 @@ class MainActivity : ComponentActivity() {
         trackTimerRunnables.remove(targetTrackId)
         
         // ViewModel에서 기록 중지 (여러 항적 동시 기록 지원)
-        viewModel.stopTrackRecording(targetTrackId)
+        trackViewModel.stopTrackRecording(targetTrackId)
         
         Log.d("[MainActivity]", "항적 기록 중지: $targetTrackId")
     }
     
     // GPS 위치 업데이트 시 항적 점 추가 (여러 항적 동시 기록 지원)
-    internal fun addTrackPointIfNeeded(latitude: Double, longitude: Double, viewModel: MainViewModel) {
-        val trackUiState = viewModel.trackUiState
+    internal fun addTrackPointIfNeeded(latitude: Double, longitude: Double, trackViewModel: TrackViewModel) {
+        val trackUiState = trackViewModel.trackUiState
         if (trackUiState.recordingTracks.isEmpty()) return
         
         val currentTime = System.currentTimeMillis()
         
         // 마지막 GPS 위치 업데이트
-        viewModel.updateGpsLocation(latitude, longitude, true)
+        mainViewModel?.updateGpsLocation(latitude, longitude, true)
         
         // 각 기록 중인 항적에 대해 처리
         trackUiState.recordingTracks.forEach { (trackId, recordingState) ->
             // ViewModel의 캐시를 사용하여 항적 정보 가져오기 (성능 최적화)
-            val track = viewModel.getTrack(trackId) ?: return@forEach
+            val track = trackViewModel.getTrack(trackId) ?: return@forEach
             
             when (track.intervalType) {
             "time" -> {
                     // 시간 간격 기준: 첫 번째 점 추가 후 타이머 시작
                     if (recordingState.lastTrackPointTime == 0L) {
                     // 첫 번째 점 추가
-                        viewModel.addTrackPointIfNeeded(latitude, longitude)
+                        trackViewModel.addTrackPointIfNeeded(latitude, longitude)
                     
                     // 타이머 시작 (설정한 시간 간격마다 점 추가)
-                        startTrackTimer(trackId, track.timeInterval, viewModel)
+                        startTrackTimer(trackId, track.timeInterval, trackViewModel)
                 }
                 // 이후 점들은 타이머가 추가함
             }
@@ -417,7 +419,7 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 if (shouldAddPoint) {
-                        viewModel.addTrackPointIfNeeded(latitude, longitude)
+                        trackViewModel.addTrackPointIfNeeded(latitude, longitude)
         }
     }
             }
@@ -612,7 +614,6 @@ class MainActivity : ComponentActivity() {
                 val viewModel: MainViewModel = viewModel(
                     factory = MainViewModel.provideFactory(
                         pointRepository = pointRepository,
-                        trackRepository = trackRepository,
                         routeRepository = routeRepository,
                         locationManager = locationManager
                     )
@@ -624,14 +625,24 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 
+                val calculateDistanceUseCase = com.marineplay.chartplotter.domain.usecases.CalculateDistanceUseCase()
+                val trackViewModel: TrackViewModel = viewModel(
+                    factory = TrackViewModel.provideFactory(
+                        trackRepository = trackRepository,
+                        calculateDistanceUseCase = calculateDistanceUseCase
+                    )
+                )
+                
                 // onKeyDown에서 사용하기 위해 ViewModel 참조 저장
                 mainViewModel = viewModel
+                trackViewModelRef = trackViewModel
                 
                 // ChartPlotterApp 호출 (EntryMode에 따라 화면 구성)
                 com.marineplay.chartplotter.presentation.ChartPlotterApp(
                     entryMode = currentEntryMode,
                     viewModel = viewModel,
                     settingsViewModel = settingsViewModel,
+                    trackViewModel = trackViewModel,
                     activity = this@MainActivity,
                     onMapLibreMapChange = { map ->
                         mapLibreMap = map
