@@ -14,8 +14,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.marineplay.chartplotter.R
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
 import com.marineplay.chartplotter.presentation.viewmodel.SettingsViewModel
@@ -57,7 +59,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "설정",
+                        text = stringResource(R.string.settings),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -68,7 +70,7 @@ fun SettingsScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "닫기",
+                            contentDescription = stringResource(R.string.settings_close),
                             tint = Color.White
                         )
                     }
@@ -78,7 +80,7 @@ fun SettingsScreen(
                 
                 // 카테고리 목록
                 SettingsCategoryItem(
-                    title = "시스템",
+                    title = stringResource(R.string.settings_system),
                     icon = Icons.Default.Settings,
                     isSelected = selectedCategory == "시스템",
                     onClick = { selectedCategory = "시스템" }
@@ -201,7 +203,6 @@ private fun SettingsCategoryItem(
 @Composable
 private fun SystemSettingsContent(viewModel: SettingsViewModel, mainViewModel: MainViewModel) {
     val systemSettings = viewModel.systemSettings
-    var showLanguageOptions by remember { mutableStateOf(false) }
     var showFontSizeOptions by remember { mutableStateOf(false) }
     var showVolumeOptions by remember { mutableStateOf(false) }
     var showTimeOptions by remember { mutableStateOf(false) }
@@ -217,29 +218,12 @@ private fun SystemSettingsContent(viewModel: SettingsViewModel, mainViewModel: M
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 사용언어
+        // 사용언어 (SystemSetting 앱에서만 변경 가능, 읽기 전용 표시)
         SettingsRow(
-            title = "사용언어",
+            title = stringResource(R.string.language),
             value = systemSettings.language,
-            onClick = { showLanguageOptions = !showLanguageOptions }
+            onClick = { } // 읽기 전용
         )
-        if (showLanguageOptions) {
-            val languages = listOf("한국어", "영어", "일본어", "중국어")
-            languages.forEach { language ->
-                Text(
-                    language,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            viewModel.updateLanguage(language)
-                            showLanguageOptions = false
-                        }
-                        .padding(vertical = 8.dp, horizontal = 16.dp),
-                    color = if (systemSettings.language == language) Color(0xFFFFD700) else Color.White,
-                    fontSize = 13.sp
-                )
-            }
-        }
         
         // 자선 설정
         SettingsRow(

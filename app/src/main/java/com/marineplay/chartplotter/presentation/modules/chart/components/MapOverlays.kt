@@ -8,9 +8,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.marineplay.chartplotter.R
 import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
 
 /**
@@ -38,7 +40,7 @@ fun MapOverlays(viewModel: MainViewModel) {
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = "위도",
+                        text = stringResource(R.string.latitude),
                         color = Color.Black,
                         fontSize = 12.sp
                     )
@@ -54,7 +56,7 @@ fun MapOverlays(viewModel: MainViewModel) {
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = "경도",
+                        text = stringResource(R.string.longitude),
                         color = Color.Black,
                         fontSize = 12.sp
                     )
@@ -67,7 +69,7 @@ fun MapOverlays(viewModel: MainViewModel) {
                 }
             } else {
                 Text(
-                    text = "GPS 신호 없음",
+                    text = stringResource(R.string.gps_no_signal),
                     color = Color.Black,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
@@ -79,7 +81,7 @@ fun MapOverlays(viewModel: MainViewModel) {
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = "COG",
+                    text = stringResource(R.string.cog),
                     color = Color.Black,
                     fontSize = 12.sp
                 )
@@ -92,16 +94,22 @@ fun MapOverlays(viewModel: MainViewModel) {
             }
 
             // 화면표시 모드
+            val modeDisplayText = when (mapUiState.mapDisplayMode) {
+                "노스업" -> stringResource(R.string.mode_north_up)
+                "헤딩업" -> stringResource(R.string.mode_heading_up)
+                "코스업" -> stringResource(R.string.mode_course_up)
+                else -> stringResource(R.string.mode_north_up)
+            }
             Column(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = "모드",
+                    text = stringResource(R.string.mode),
                     color = Color.Black,
                     fontSize = 12.sp
                 )
                 Text(
-                    text = mapUiState.mapDisplayMode,
+                    text = modeDisplayText,
                     color = Color.Black,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
@@ -129,18 +137,18 @@ fun MapOverlays(viewModel: MainViewModel) {
             ) {
                 Column {
                     Text(
-                        text = "커서 GPS",
+                        text = stringResource(R.string.cursor_gps),
                         color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "위도: ${String.format("%.6f", mapUiState.cursorLatLng!!.latitude)}",
+                        text = "${stringResource(R.string.latitude)}: ${String.format("%.6f", mapUiState.cursorLatLng!!.latitude)}",
                         color = Color.White,
                         fontSize = 11.sp
                     )
                     Text(
-                        text = "경도: ${String.format("%.6f", mapUiState.cursorLatLng!!.longitude)}",
+                        text = "${stringResource(R.string.longitude)}: ${String.format("%.6f", mapUiState.cursorLatLng!!.longitude)}",
                         color = Color.White,
                         fontSize = 11.sp
                     )

@@ -18,8 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.marineplay.chartplotter.R
 import com.marineplay.chartplotter.*
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.data.models.Route
@@ -85,14 +87,14 @@ fun MenuPanel(
                     ) {
                         Text(
                             text = when (mapUiState.currentMenu) {
-                                "main" -> "메뉴"
-                                "point" -> "포인트"
-                                "ais" -> "AIS"
-                                "navigation" -> "항해"
-                                "track" -> "항적"
-                                "display" -> "화면표시"
-                                "route" -> "경로"
-                                else -> "메뉴"
+                                "main" -> stringResource(R.string.menu)
+                                "point" -> stringResource(R.string.menu_point)
+                                "ais" -> stringResource(R.string.menu_ais)
+                                "navigation" -> stringResource(R.string.menu_navigation)
+                                "track" -> stringResource(R.string.menu_track)
+                                "display" -> stringResource(R.string.menu_display)
+                                "route" -> stringResource(R.string.menu_route)
+                                else -> stringResource(R.string.menu)
                             },
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
@@ -113,7 +115,7 @@ fun MenuPanel(
                         ) {
                             Icon(
                                 imageVector = if (mapUiState.currentMenu == "main") Icons.Default.Close else Icons.Default.ArrowBack,
-                                contentDescription = if (mapUiState.currentMenu == "main") "메뉴 닫기" else "뒤로가기",
+                                contentDescription = if (mapUiState.currentMenu == "main") stringResource(R.string.menu_close) else stringResource(R.string.menu_back),
                                 tint = Color.White
                             )
                         }
@@ -192,7 +194,7 @@ fun MenuPanel(
 @Composable
 private fun MenuMainContent(viewModel: MainViewModel) {
     Text(
-        "포인트",
+        stringResource(R.string.menu_point),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -200,7 +202,7 @@ private fun MenuMainContent(viewModel: MainViewModel) {
         color = Color.White
     )
     Text(
-        "항해",
+        stringResource(R.string.menu_navigation),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -208,7 +210,7 @@ private fun MenuMainContent(viewModel: MainViewModel) {
         color = Color.White
     )
     Text(
-        "항적",
+        stringResource(R.string.menu_track),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -216,7 +218,7 @@ private fun MenuMainContent(viewModel: MainViewModel) {
         color = Color.White
     )
     Text(
-        "AIS",
+        stringResource(R.string.menu_ais),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -224,7 +226,7 @@ private fun MenuMainContent(viewModel: MainViewModel) {
         color = Color.White
     )
     Text(
-        "화면표시 방법설정",
+        stringResource(R.string.menu_display),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -232,7 +234,7 @@ private fun MenuMainContent(viewModel: MainViewModel) {
         color = Color.White
     )
     Text(
-        "경로",
+        stringResource(R.string.menu_route),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -250,9 +252,12 @@ private fun MenuPointContent(
     getNextAvailablePointNumber: () -> Int
 ) {
     val mapUiState = viewModel.mapUiState
+    val latitudeLabel = stringResource(R.string.latitude)
+    val longitudeLabel = stringResource(R.string.longitude)
+    val coordsUnavailable = stringResource(R.string.coords_unavailable)
     
     Text(
-        "포인트 생성",
+        stringResource(R.string.point_create),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -267,12 +272,12 @@ private fun MenuPointContent(
                 targetLatLng?.let { latLng ->
                     viewModel.updateCurrentLatLng(latLng)
                     viewModel.updateCenterCoordinates(
-                        "위도: ${String.format("%.6f", latLng.latitude)}\n경도: ${String.format("%.6f", latLng.longitude)}"
+                        "$latitudeLabel: ${String.format("%.6f", latLng.latitude)}\n$longitudeLabel: ${String.format("%.6f", latLng.longitude)}"
                     )
                     viewModel.updatePointName("Point${getNextAvailablePointNumber()}")
                     viewModel.updateSelectedColor(Color.Red)
                 } ?: run {
-                    viewModel.updateCenterCoordinates("좌표를 가져올 수 없습니다.")
+                    viewModel.updateCenterCoordinates(coordsUnavailable)
                     viewModel.updateCurrentLatLng(null)
                 }
                 viewModel.updateShowMenu(false)
@@ -282,7 +287,7 @@ private fun MenuPointContent(
         color = Color.White
     )
     Text(
-        "포인트 삭제",
+        stringResource(R.string.point_delete),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -294,7 +299,7 @@ private fun MenuPointContent(
         color = Color.White
     )
     Text(
-        "포인트 변경",
+        stringResource(R.string.point_edit),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -324,7 +329,7 @@ private fun MenuNavigationContent(
     }
     
     Text(
-        "항해 시작",
+        stringResource(R.string.nav_start),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -342,7 +347,7 @@ private fun MenuNavigationContent(
     Spacer(modifier = Modifier.height(8.dp))
     
     Text(
-        "경로로 항해 시작",
+        stringResource(R.string.nav_start_from_route),
         fontSize = 16.sp,
         fontWeight = FontWeight.Bold,
         color = Color.White,
@@ -351,7 +356,7 @@ private fun MenuNavigationContent(
     
     if (routes.value.isEmpty()) {
         Text(
-            "저장된 경로가 없습니다.",
+            stringResource(R.string.no_routes_saved),
             fontSize = 12.sp,
             color = Color.Gray,
             modifier = Modifier.padding(8.dp)
@@ -420,7 +425,7 @@ private fun MenuNavigationContent(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "포인트 ${route.points.size}개",
+                            text = stringResource(R.string.points_count, route.points.size),
                             fontSize = 12.sp,
                             color = Color.Gray
                         )
@@ -447,7 +452,7 @@ private fun MenuNavigationContent(
         color = Color.White
     )
     Text(
-        "경유지 관리",
+        stringResource(R.string.waypoint_manage),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -457,7 +462,7 @@ private fun MenuNavigationContent(
         color = Color.White
     )
     Text(
-        "항해 중지",
+        stringResource(R.string.nav_stop),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -479,7 +484,7 @@ private fun MenuNavigationContent(
     
     if (mapUiState.mapDisplayMode == "코스업" && (mapUiState.coursePoint != null || mapUiState.navigationPoint != null)) {
         Text(
-            text = "항해 중: ${mapUiState.coursePoint?.name ?: mapUiState.navigationPoint?.name ?: "커서 위치"}",
+            text = "${stringResource(R.string.navigation_in_progress)}: ${mapUiState.coursePoint?.name ?: mapUiState.navigationPoint?.name ?: stringResource(R.string.cursor_position)}",
             fontSize = 14.sp,
             color = Color.Yellow,
             modifier = Modifier.padding(vertical = 8.dp)
@@ -495,7 +500,7 @@ private fun MenuTrackContent(
     updateTrackDisplay: () -> Unit
 ) {
     Text(
-        "항적 목록",
+        stringResource(R.string.track_list),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -510,7 +515,7 @@ private fun MenuTrackContent(
     
     if (trackUiState.isRecordingTrack && trackUiState.currentRecordingTrack != null) {
         Text(
-            "항적 기록 중지",
+            stringResource(R.string.track_stop_recording),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
@@ -526,7 +531,7 @@ private fun MenuTrackContent(
             color = Color.Red
         )
         Text(
-            text = "기록 중: ${trackUiState.currentRecordingTrack!!.name}",
+            text = stringResource(R.string.recording, trackUiState.currentRecordingTrack!!.name),
             fontSize = 14.sp,
             color = Color.Yellow,
             modifier = Modifier.padding(vertical = 8.dp)
@@ -537,7 +542,7 @@ private fun MenuTrackContent(
 @Composable
 private fun MenuAisContent(viewModel: MainViewModel) {
     Text(
-        "AIS ON/OFF",
+        stringResource(R.string.ais_toggle),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -549,7 +554,7 @@ private fun MenuAisContent(viewModel: MainViewModel) {
         color = Color.White
     )
     Text(
-        "AIS 설정",
+        stringResource(R.string.ais_settings),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -570,7 +575,7 @@ private fun MenuDisplayContent(
     updateMapRotation: () -> Unit
 ) {
     Text(
-        "노스업",
+        stringResource(R.string.mode_north_up),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -583,7 +588,7 @@ private fun MenuDisplayContent(
         color = if (mapUiState.mapDisplayMode == "노스업") Color.Yellow else Color.White
     )
     Text(
-        "헤딩업",
+        stringResource(R.string.mode_heading_up),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -596,7 +601,7 @@ private fun MenuDisplayContent(
         color = if (mapUiState.mapDisplayMode == "헤딩업") Color.Yellow else Color.White
     )
     Text(
-        "코스업",
+        stringResource(R.string.mode_course_up),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -642,7 +647,7 @@ private fun MenuRouteContent(
     }
     
     Text(
-        "경로 생성",
+        stringResource(R.string.route_create),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
@@ -667,7 +672,7 @@ private fun MenuRouteContent(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            "경로 표시",
+            stringResource(R.string.route_display),
             color = Color.White,
             fontSize = 14.sp
         )
@@ -680,7 +685,7 @@ private fun MenuRouteContent(
     Spacer(modifier = Modifier.height(8.dp))
     
     Text(
-        "경로 목록",
+        stringResource(R.string.route_list),
         fontSize = 16.sp,
         fontWeight = FontWeight.Bold,
         color = Color.White,
@@ -689,7 +694,7 @@ private fun MenuRouteContent(
     
     if (routes.value.isEmpty()) {
         Text(
-            "저장된 경로가 없습니다.",
+            stringResource(R.string.no_routes_saved),
             fontSize = 12.sp,
             color = Color.Gray,
             modifier = Modifier.padding(8.dp)
@@ -716,7 +721,7 @@ private fun MenuRouteContent(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "포인트 ${route.points.size}개",
+                            text = stringResource(R.string.points_count, route.points.size),
                             fontSize = 12.sp,
                             color = Color.Gray
                         )
@@ -737,7 +742,7 @@ private fun MenuRouteContent(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
-                                    contentDescription = "편집",
+                                    contentDescription = stringResource(R.string.edit),
                                     tint = Color.Blue
                                 )
                             }
@@ -755,7 +760,7 @@ private fun MenuRouteContent(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "삭제",
+                                    contentDescription = stringResource(R.string.delete),
                                     tint = Color.Red
                                 )
                             }

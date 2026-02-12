@@ -42,11 +42,7 @@ class SettingsViewModel(
     }
     
     // ========== 일반 설정 ==========
-    
-    fun updateLanguage(language: String) {
-        val newSettings = systemSettings.copy(language = language)
-        updateSystemSettings(newSettings)
-    }
+    // 언어 설정은 SystemSetting 앱에서만 변경 가능. ChartPlotter는 ContentProvider에서 읽어서 적용만 함.
     
     fun updateVesselSettings(length: Float, width: Float) {
         val newSettings = systemSettings.copy(vesselLength = length, vesselWidth = width)

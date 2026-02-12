@@ -14,6 +14,12 @@ import android.view.KeyEvent
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.activity.ComponentActivity
+import android.content.res.Configuration
+import android.database.ContentObserver
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import java.util.Locale
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -191,6 +197,10 @@ class MainActivity : ComponentActivity() {
     
     // EntryMode 저장 (뒤로가기 처리용)
     private var currentEntryMode: EntryMode = EntryMode.CHART_ONLY
+
+    // 현재 적용된 언어 (SystemSetting 변경 감지용)
+    private var currentLanguage: String = "한국어"
+    private var settingsContentObserver: ContentObserver? = null
 
     // 줌 함수들
     private fun startContinuousZoomIn(viewModel: MainViewModel) {
@@ -567,6 +577,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        // 언어: SystemSetting ContentProvider에서 읽어 attachBaseContext에서 적용 (AppCompatActivity 없이 동작)
+        val language = try {
+            val reader = com.marineplay.chartplotter.data.SystemSettingsReader(newBase)
+            reader.loadSettings().language
+        } catch (e: Exception) {
+            android.util.Log.w("[MainActivity]", "SystemSetting 미설치 또는 로드 실패, 기본 언어 사용: ${e.message}")
+            "한국어"
+        }
+        currentLanguage = language
+        val locale = com.marineplay.chartplotter.utils.LocaleHelper.languageToLocale(language)
+        val config = Configuration(newBase.resources.configuration)
+        config.setLocale(locale)
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
+
     @OptIn(ExperimentalFoundationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -607,6 +633,24 @@ class MainActivity : ComponentActivity() {
         currentEntryMode = EntryMode.fromString(entryModeString)
         
         android.util.Log.d("[MainActivity]", "ENTRY_MODE: $entryModeString -> $currentEntryMode")
+
+        // SystemSetting 언어 변경 감지: 변경 시 recreate로 새 언어 적용
+        val settingsUri = Uri.parse("content://com.marineplay.systemsetting.provider/settings")
+        settingsContentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                super.onChange(selfChange)
+                try {
+                    val newSettings = systemSettingsReader.loadSettings()
+                    if (newSettings.language != currentLanguage) {
+                        android.util.Log.d("[MainActivity]", "언어 변경 감지: $currentLanguage -> ${newSettings.language}, recreate")
+                        runOnUiThread { recreate() }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("[MainActivity]", "설정 변경 확인 중 오류: ${e.message}")
+                }
+            }
+        }
+        contentResolver.registerContentObserver(settingsUri, true, settingsContentObserver!!)
 
         @OptIn(ExperimentalMaterial3Api::class)
         setContent {
@@ -967,6 +1011,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        settingsContentObserver?.let { contentResolver.unregisterContentObserver(it) }
+        settingsContentObserver = null
         super.onDestroy()
         locationManager?.stopLocationUpdates()
         locationManager?.unregisterSensors()
