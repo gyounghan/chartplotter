@@ -17,8 +17,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.marineplay.chartplotter.viewmodel.MainViewModel
-import com.marineplay.chartplotter.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.SettingsViewModel
 
 /**
  * 설정 화면 - 2단 레이아웃

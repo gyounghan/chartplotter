@@ -11,7 +11,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
 
 /**
  * 지도 오버레이 컴포넌트 (GPS 정보, 커서 정보 등)

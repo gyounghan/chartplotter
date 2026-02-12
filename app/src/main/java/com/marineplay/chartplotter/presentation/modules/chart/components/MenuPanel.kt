@@ -24,10 +24,10 @@ import com.marineplay.chartplotter.*
 import com.marineplay.chartplotter.SavedPoint
 import com.marineplay.chartplotter.data.models.Route
 import com.marineplay.chartplotter.data.models.RoutePoint
-import com.marineplay.chartplotter.viewmodel.MainViewModel
-import com.marineplay.chartplotter.viewmodel.SettingsViewModel
-import com.marineplay.chartplotter.viewmodel.TrackViewModel
-import com.marineplay.chartplotter.viewmodel.RouteViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.PMTilesLoader
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.geometry.LatLng
@@ -491,7 +491,7 @@ private fun MenuNavigationContent(
 private fun MenuTrackContent(
     viewModel: MainViewModel,
     trackViewModel: TrackViewModel,
-    trackUiState: com.marineplay.chartplotter.viewmodel.TrackUiState,
+    trackUiState: com.marineplay.chartplotter.presentation.viewmodel.TrackUiState,
     updateTrackDisplay: () -> Unit
 ) {
     Text(
@@ -565,7 +565,7 @@ private fun MenuAisContent(viewModel: MainViewModel) {
 @Composable
 private fun MenuDisplayContent(
     viewModel: MainViewModel,
-    mapUiState: com.marineplay.chartplotter.viewmodel.MapUiState,
+    mapUiState: com.marineplay.chartplotter.presentation.viewmodel.MapUiState,
     loadPointsFromLocal: () -> List<SavedPoint>,
     updateMapRotation: () -> Unit
 ) {

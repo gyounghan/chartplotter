@@ -3,10 +3,10 @@ package com.marineplay.chartplotter.presentation
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
-import com.marineplay.chartplotter.viewmodel.MainViewModel
-import com.marineplay.chartplotter.viewmodel.SettingsViewModel
-import com.marineplay.chartplotter.viewmodel.TrackViewModel
-import com.marineplay.chartplotter.viewmodel.RouteViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.LocationManager
 import com.marineplay.chartplotter.EntryMode
 import com.marineplay.chartplotter.presentation.modules.*

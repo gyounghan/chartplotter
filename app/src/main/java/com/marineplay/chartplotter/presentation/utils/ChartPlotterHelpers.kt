@@ -4,7 +4,7 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.marineplay.chartplotter.*
 import com.marineplay.chartplotter.domain.mappers.PointMapper
-import com.marineplay.chartplotter.viewmodel.MainViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import kotlin.math.*

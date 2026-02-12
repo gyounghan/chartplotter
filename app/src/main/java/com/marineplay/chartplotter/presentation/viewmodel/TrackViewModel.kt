@@ -1,4 +1,4 @@
-package com.marineplay.chartplotter.viewmodel
+package com.marineplay.chartplotter.presentation.viewmodel
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf

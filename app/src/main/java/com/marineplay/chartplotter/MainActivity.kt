@@ -132,10 +132,10 @@ import org.maplibre.android.geometry.LatLngBounds
 import android.R.attr.onClick
 import com.marineplay.chartplotter.domain.entities.Track
 import com.marineplay.chartplotter.domain.entities.TrackPoint
-import com.marineplay.chartplotter.viewmodel.MainViewModel
-import com.marineplay.chartplotter.viewmodel.SettingsViewModel
-import com.marineplay.chartplotter.viewmodel.TrackViewModel
-import com.marineplay.chartplotter.viewmodel.RouteViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.SettingsViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.TrackViewModel
+import com.marineplay.chartplotter.presentation.viewmodel.RouteViewModel
 import com.marineplay.chartplotter.presentation.modules.chart.overlays.TidalCurrentOverlay
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
