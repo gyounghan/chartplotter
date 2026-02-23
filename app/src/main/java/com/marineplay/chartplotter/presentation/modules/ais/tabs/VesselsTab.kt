@@ -187,7 +187,8 @@ fun VesselsTab(viewModel: AISViewModel) {
                 vessel = vessel,
                 currentLatitude = currentLat,
                 currentLongitude = currentLon,
-                onDismiss = { selectedVessel = null }
+                onDismiss = { selectedVessel = null },
+                onToggleWatchlist = { viewModel.toggleWatchlist(it) }
             )
         }
     }

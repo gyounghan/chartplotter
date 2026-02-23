@@ -86,8 +86,8 @@ class AISViewModel(
     }
     
     override fun onCleared() {
+        // AIS는 앱 전체에서 유지되므로 ViewModel 종료 시 disconnect 하지 않음
         super.onCleared()
-        disconnect()
     }
 }
 

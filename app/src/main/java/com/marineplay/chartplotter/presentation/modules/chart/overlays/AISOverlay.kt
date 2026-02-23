@@ -30,6 +30,8 @@ class AISOverlay {
     private val triangleLayerId = "ais-vessels-triangle"
     private val labelLayerId = "ais-vessels-label"
     private val triangleIconId = "ais-vessel-triangle-icon"
+    private val watchlistIconId = "ais-vessel-watchlist-icon"
+    private val watchlistLayerId = "ais-vessels-watchlist-triangle"
     private val labelMinZoom = 12.0f
     private val triangleMinZoom = 6.0f // 줌 6 이상에서 삼각형 표시
     private val circleMaxZoom = 5.0f // 줌 0~5에서 점 표시
@@ -37,6 +39,7 @@ class AISOverlay {
     private var geoJsonSource: GeoJsonSource? = null
     private var circleLayer: CircleLayer? = null
     private var triangleLayer: SymbolLayer? = null
+    private var watchlistTriangleLayer: SymbolLayer? = null
     private var labelLayer: SymbolLayer? = null
     private var mapRef: MapLibreMap? = null
     private var styleRef: Style? = null
@@ -53,6 +56,7 @@ class AISOverlay {
     
     // ✅ Bitmap 캐시
     private var cachedTriangleBitmap: Bitmap? = null
+    private var cachedWatchlistBitmap: Bitmap? = null
     
     // ✅ Path 캐시 (재사용을 위해 클래스 멤버로)
     private val trianglePath = Path()
@@ -140,6 +144,7 @@ class AISOverlay {
             try {
                 geoJsonSource?.let { style.removeSource(it) }
                 circleLayer?.let { style.removeLayer(it) }
+                watchlistTriangleLayer?.let { style.removeLayer(it) }
                 triangleLayer?.let { style.removeLayer(it) }
                 labelLayer?.let { style.removeLayer(it) }
             } catch (e: Exception) {
@@ -150,6 +155,7 @@ class AISOverlay {
         geoJsonSource = null
         circleLayer = null
         triangleLayer = null
+        watchlistTriangleLayer = null
         labelLayer = null
         mapRef = null
         styleRef = null
@@ -250,15 +256,19 @@ class AISOverlay {
                     // ✅ 좌표 변경 확인 (더 정확한 비교로 불필요한 재생성 방지)
                     val coordinatesChanged = if (previousCoords != null) {
                         val (prevLat, prevLon) = previousCoords
-                        // 소수점 5자리로 반올림하여 비교 (약 1m 이내 변화 무시)
                         val latDiff = kotlin.math.abs(prevLat - lat)
                         val lonDiff = kotlin.math.abs(prevLon - lon)
                         latDiff > 0.00001 || lonDiff > 0.00001
                     } else {
                         true // 새 선박
                     }
+                    // ✅ 즐겨찾기 변경 확인 (아이콘 색상 업데이트 필요)
+                    val cachedFeature = featureCache[mmsi]
+                    val cachedWatchlist = cachedFeature?.getNumberProperty("isWatchlisted")?.toInt() ?: 0
+                    val newWatchlist = if (vessel.isWatchlisted) 1 else 0
+                    val watchlistChanged = cachedWatchlist != newWatchlist
                     
-                    if (coordinatesChanged) {
+                    if (coordinatesChanged || watchlistChanged) {
                         // ✅ 변경된 선박만 새 Feature 생성 (Geometry 재생성)
                         val geometry = Point.fromLngLat(lon, lat)
                         val newFeature = Feature.fromGeometry(geometry).apply {
@@ -266,6 +276,7 @@ class AISOverlay {
                             addStringProperty("name", vessel.name)
                             addStringProperty("mmsi", mmsi) // MMSI를 id로 사용 (Feature-State 대신 property로)
                             addNumberProperty("course", vessel.course.toDouble())
+                            addNumberProperty("isWatchlisted", if (vessel.isWatchlisted) 1 else 0)
                         }
                         featureCache[mmsi] = newFeature
                         previousCoordinates[mmsi] = Pair(lat, lon)
@@ -340,15 +351,21 @@ class AISOverlay {
         // 삼각형 아이콘 생성 및 등록 (캐시 사용)
         if (style.getImage(triangleIconId) == null) {
             if (cachedTriangleBitmap == null) {
-                cachedTriangleBitmap = createTriangleIcon(64)
+                cachedTriangleBitmap = createTriangleIcon(64, Color.rgb(0, 180, 0), Color.rgb(0, 80, 0))
             }
             style.addImage(triangleIconId, cachedTriangleBitmap!!)
             Log.d("[AISOverlay]", "삼각형 아이콘 생성 완료: $triangleIconId (캐시 사용)")
         }
-        
+        // 즐겨찾기 선박용 아이콘 (금색/주황색)
+        if (style.getImage(watchlistIconId) == null) {
+            if (cachedWatchlistBitmap == null) {
+                cachedWatchlistBitmap = createTriangleIcon(64, Color.rgb(255, 180, 0), Color.rgb(200, 120, 0))
+            }
+            style.addImage(watchlistIconId, cachedWatchlistBitmap!!)
+            Log.d("[AISOverlay]", "즐겨찾기 아이콘 생성 완료: $watchlistIconId")
+        }
 
-        
-        // 줌 6 이상: 삼각형으로 표시
+        // 줌 6 이상: 일반 선박 삼각형 (초록색)
         if (triangleLayer == null) {
             Log.d("[AISOverlay]", "TriangleLayer 생성 시작")
             triangleLayer = SymbolLayer(triangleLayerId, sourceId).apply {
@@ -365,21 +382,48 @@ class AISOverlay {
                             stop(15f, 0.9f),
                             stop(18f, 1.2f)
                         )
-                    ).also {
-                        Log.d("[AISOverlay]", "iconSize Expression 설정 완료: 줌 6=0.6, 8=0.8, 10=1.0, 12=1.3, 15=1.8, 18=2.5")
-                    },
-                    PropertyFactory.iconRotate(get("course")), // 선박 방향으로 회전
+                    ),
+                    PropertyFactory.iconRotate(get("course")),
                     PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
                     PropertyFactory.iconAllowOverlap(true),
                     PropertyFactory.iconIgnorePlacement(true),
                     PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER)
                 )
-                setMinZoom(triangleMinZoom) // 줌 6 이상에서만 표시
+                setMinZoom(triangleMinZoom)
+                // isWatchlisted가 1이 아닌 선박만 (0이거나 없으면 표시)
+                setFilter(neq(coalesce(get("isWatchlisted"), literal(0)), literal(1)))
             }
             style.addLayer(triangleLayer!!)
-            Log.d("[AISOverlay]", "TriangleLayer 추가 완료: $triangleLayerId (minZoom=$triangleMinZoom)")
-        } else {
-            Log.d("[AISOverlay]", "TriangleLayer 이미 존재함: $triangleLayerId")
+            Log.d("[AISOverlay]", "TriangleLayer 추가 완료: $triangleLayerId")
+        }
+        // 즐겨찾기 선박 삼각형 (금색) - 위 레이어 위에 표시
+        if (watchlistTriangleLayer == null) {
+            watchlistTriangleLayer = SymbolLayer(watchlistLayerId, sourceId).apply {
+                setProperties(
+                    PropertyFactory.iconImage(watchlistIconId),
+                    PropertyFactory.iconSize(
+                        interpolate(
+                            exponential(0.0f),
+                            zoom(),
+                            stop(6f, 0.0f),
+                            stop(8f, 0.0f),
+                            stop(10f, 0.5f),
+                            stop(12f, 0.6f),
+                            stop(15f, 0.9f),
+                            stop(18f, 1.2f)
+                        )
+                    ),
+                    PropertyFactory.iconRotate(get("course")),
+                    PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconIgnorePlacement(true),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER)
+                )
+                setMinZoom(triangleMinZoom)
+                setFilter(eq(get("isWatchlisted"), literal(1)))
+            }
+            style.addLayer(watchlistTriangleLayer!!)
+            Log.d("[AISOverlay]", "WatchlistTriangleLayer 추가 완료: $watchlistLayerId")
         }
 
         // 확대 시 MMSI 라벨 표시
@@ -425,21 +469,24 @@ class AISOverlay {
     
     /**
      * 삼각형 아이콘 생성 (북쪽을 향하는 이등변 삼각형)
-     * 차트플로터 표준: 초록색 채워진 삼각형 + 검은색 테두리
+     * @param fillColor 채움 색상 (기본: 초록색)
+     * @param strokeColor 테두리 색상
      */
-    private fun createTriangleIcon(sizePx: Int): Bitmap {
+    private fun createTriangleIcon(
+        sizePx: Int,
+        fillColor: Int = Color.rgb(0, 180, 0),
+        strokeColor: Int = Color.rgb(0, 80, 0)
+    ): Bitmap {
         val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         
-        // 초록색 채움 (차트플로터 표준 AIS 타겟)
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(0, 180, 0) // 초록색 (Green)
+            color = fillColor
             style = Paint.Style.FILL
         }
         
-        // 검은색 테두리 (가시성 향상)
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(0, 80, 0) // 진한 초록색 테두리
+            color = strokeColor
             style = Paint.Style.STROKE
             strokeWidth = sizePx * 0.04f
         }

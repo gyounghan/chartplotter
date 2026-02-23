@@ -239,21 +239,17 @@ private fun SystemSettingsContent(viewModel: SettingsViewModel, mainViewModel: M
         SettingsRow(
             title = "문자 크기",
             value = when {
-                systemSettings.fontSize <= 12f -> "작은 글자"
+                systemSettings.fontSize <= 12f -> "작게"
                 systemSettings.fontSize <= 14f -> "일반"
-                systemSettings.fontSize <= 16f -> "큰 글자"
-                systemSettings.fontSize <= 18f -> "매우 큰 글자"
-                else -> "특대 글자"
+                else -> "크게"
             },
             onClick = { showFontSizeOptions = !showFontSizeOptions }
         )
         if (showFontSizeOptions) {
             val fontSizes = listOf(
-                Pair(12f, "작은 글자"),
+                Pair(12f, "작게"),
                 Pair(14f, "일반"),
-                Pair(16f, "큰 글자"),
-                Pair(18f, "매우 큰 글자"),
-                Pair(20f, "특대 글자")
+                Pair(18f, "크게")
             )
             fontSizes.forEach { (size, label) ->
                 Text(
@@ -265,7 +261,11 @@ private fun SystemSettingsContent(viewModel: SettingsViewModel, mainViewModel: M
                             showFontSizeOptions = false
                         }
                         .padding(vertical = 8.dp, horizontal = 16.dp),
-                    color = if (kotlin.math.abs(systemSettings.fontSize - size) < 0.5f) Color(0xFFFFD700) else Color.White,
+                    color = if (when (size) {
+                        12f -> systemSettings.fontSize <= 13f
+                        14f -> systemSettings.fontSize in 13f..15.5f
+                        else -> systemSettings.fontSize >= 15.5f
+                    }) Color(0xFFFFD700) else Color.White,
                     fontSize = 13.sp
                 )
             }

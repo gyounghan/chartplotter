@@ -47,6 +47,10 @@ class AISDataReceiver(private val context: Context) {
      * @param baudRate 보드레이트 (기본값: 38400)
      */
     fun connect(baudRate: Int = 38400): Boolean {
+        // 이미 연결된 경우 스킵
+        if (_isConnected.value) {
+            return true
+        }
         try {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
             val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)

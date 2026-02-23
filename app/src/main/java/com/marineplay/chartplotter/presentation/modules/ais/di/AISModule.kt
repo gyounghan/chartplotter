@@ -1,31 +1,37 @@
 package com.marineplay.chartplotter.presentation.modules.ais.di
 
 import android.content.Context
+import com.marineplay.chartplotter.ChartPlotterApplication
 import com.marineplay.chartplotter.data.datasources.AISDataSource
-import com.marineplay.chartplotter.data.datasources.AISDataSourceImpl
-import com.marineplay.chartplotter.data.repositories.AISRepositoryImpl
 import com.marineplay.chartplotter.domain.repositories.AISRepository
 import com.marineplay.chartplotter.domain.usecases.*
 import com.marineplay.chartplotter.presentation.modules.ais.presentation.viewmodel.AISViewModel
 
 /**
  * AIS 모듈 의존성 주입
- * 실제 프로젝트에서는 Hilt, Koin 등의 DI 프레임워크 사용 권장
+ * 앱 전체에서 AIS 데이터를 유지하기 위해 Application 싱글톤을 사용합니다.
  */
 object AISModule {
     
     /**
-     * AISDataSource 생성
+     * Application에서 싱글톤 AISRepository 가져오기
      */
-    fun provideAISDataSource(context: Context): AISDataSource {
-        return AISDataSourceImpl(context)
+    fun getAISRepository(context: Context): AISRepository {
+        return (context.applicationContext as ChartPlotterApplication).aisRepository
     }
     
     /**
-     * AISRepository 생성
+     * AISDataSource 생성 (싱글톤 - Application에서 관리)
      */
-    fun provideAISRepository(dataSource: AISDataSource): AISRepository {
-        return AISRepositoryImpl(dataSource)
+    fun provideAISDataSource(context: Context): AISDataSource {
+        return (context.applicationContext as ChartPlotterApplication).aisDataSource
+    }
+    
+    /**
+     * AISRepository 생성 (싱글톤 - Application에서 관리)
+     */
+    fun provideAISRepository(context: Context): AISRepository {
+        return getAISRepository(context)
     }
     
     /**
@@ -72,10 +78,10 @@ object AISModule {
     
     /**
      * 전체 의존성 그래프 생성
+     * Application 싱글톤을 사용하여 앱 전체에서 AIS 데이터 유지
      */
     fun createAISViewModel(context: Context): AISViewModel {
-        val dataSource = provideAISDataSource(context)
-        val repository = provideAISRepository(dataSource)
+        val repository = provideAISRepository(context)
         val getVesselsUseCase = provideGetVesselsUseCase(repository)
         val getEventsUseCase = provideGetEventsUseCase(repository)
         val updateLocationUseCase = provideUpdateLocationUseCase(repository)

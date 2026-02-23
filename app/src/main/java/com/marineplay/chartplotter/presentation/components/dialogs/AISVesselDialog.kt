@@ -1,10 +1,15 @@
 package com.marineplay.chartplotter.presentation.components.dialogs
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marineplay.chartplotter.domain.entities.AISVessel
@@ -13,7 +18,8 @@ import com.marineplay.chartplotter.domain.entities.RiskLevel
 @Composable
 fun AISVesselDialog(
     vessel: AISVessel?,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onToggleWatchlist: ((String) -> Unit)? = null
 ) {
     if (vessel == null) return
     
@@ -97,8 +103,25 @@ fun AISVesselDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("확인")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 즐겨찾기 토글
+                if (onToggleWatchlist != null) {
+                    IconButton(
+                        onClick = { onToggleWatchlist(vessel.id) }
+                    ) {
+                        Icon(
+                            imageVector = if (vessel.isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
+                            contentDescription = if (vessel.isWatchlisted) "즐겨찾기 해제" else "즐겨찾기 추가",
+                            tint = if (vessel.isWatchlisted) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("확인")
+                }
             }
         }
     )

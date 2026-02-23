@@ -60,6 +60,11 @@ class AISRepositoryImpl(
     // 의미 있는 이동 필터: 5m 이내 이동은 GPS 노이즈로 간주하여 display 좌표 업데이트 스킵
     private val MEANINGFUL_MOVE_DISTANCE_METERS = 5.0 // 5m 이상 이동만 의미 있음
     
+    // 오래된 선박 제거: 이 시간(ms) 동안 업데이트가 없으면 목록에서 제거
+    private val STALE_VESSEL_TIMEOUT_MS = 30 * 60 * 1000L // 30분
+    private val STALE_CHECK_INTERVAL_MS = 60 * 1000L // 1분마다 확인
+    private var staleRemovalJob: Job? = null
+    
     // 완전한 NMEA 메시지 정규식: !AIVDM 또는 !AIVDO로 시작하고 체크섬으로 끝나는 메시지
     private val nmeaMessagePattern = Pattern.compile("^!AIVD[MO],.*\\*[0-9A-Fa-f]{2}\\r?\\n?$")
     
@@ -73,6 +78,43 @@ class AISRepositoryImpl(
     init {
         // 데이터 수신 시작
         startDataProcessing()
+        // 오래된 선박 주기적 제거
+        startStaleVesselRemoval()
+    }
+    
+    /**
+     * 오랫동안 업데이트가 없는 선박을 주기적으로 제거
+     */
+    private fun startStaleVesselRemoval() {
+        staleRemovalJob?.cancel()
+        staleRemovalJob = scope.launch {
+            while (isActive) {
+                delay(STALE_CHECK_INTERVAL_MS)
+                removeStaleVessels()
+            }
+        }
+    }
+    
+    /**
+     * STALE_VESSEL_TIMEOUT_MS 동안 업데이트가 없는 선박 제거
+     */
+    private fun removeStaleVessels() {
+        val now = System.currentTimeMillis()
+        val currentVessels = _vessels.value.toMutableMap()
+        val toRemove = currentVessels.filter { (_, vessel) ->
+            (now - vessel.lastUpdate) > STALE_VESSEL_TIMEOUT_MS
+        }.keys.toList()
+        
+        if (toRemove.isNotEmpty()) {
+            toRemove.forEach { mmsi ->
+                currentVessels.remove(mmsi)
+                staticDataCache.remove(mmsi)
+                mmsiLastProcessedTime.remove(mmsi)
+            }
+            _vessels.value = currentVessels
+            _vesselsList.value = currentVessels.values.toList()
+            Log.d("[AISRepositoryImpl]", "오래된 선박 ${toRemove.size}척 제거: $toRemove")
+        }
     }
     
     /**
@@ -644,6 +686,7 @@ class AISRepositoryImpl(
      */
     override fun cleanup() {
         recalculationJob?.cancel()
+        staleRemovalJob?.cancel()
         disconnect()
         dataSource.cleanup()
         scope.cancel()

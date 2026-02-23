@@ -30,7 +30,8 @@ fun ChartPlotterMap(
     cursorLatLng: LatLng? = null,
     cursorScreenPosition: android.graphics.PointF? = null,
     onTouchEnd: (LatLng, android.graphics.PointF) -> Unit = { _, _ -> }, // 터치 종료 콜백
-    onTouchStart: () -> Unit = { } // 터치 시작 콜백
+    onTouchStart: () -> Unit = { }, // 터치 시작 콜백
+    fontSize: Float = 14f // 시스템 설정 문자 크기 - 전자해도 텍스트에 반영
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -70,6 +71,13 @@ fun ChartPlotterMap(
         if (isDialogShown) mapView.onPause() else mapView.onResume()
     }
     
+    // 문자 크기 변경 시 전자해도 텍스트 레이어 다시 로드 (설정에서 변경 시 즉시 반영)
+    LaunchedEffect(fontSize) {
+        mapLibreMapInstance?.let { map ->
+            PMTilesLoader.loadPMTiles(context, map, fontSize)
+        }
+    }
+    
     // Map이 준비되었을 때 1회만 초기 설정
     val mapConfigured = remember { mutableStateOf(false) }
     
@@ -101,7 +109,7 @@ fun ChartPlotterMap(
                     Log.d("[ChartPlotterMap]", "⏱️ [카메라 설정] 기본 위치: $centerPoint - ${cameraElapsed}ms")
 
                     val pmtilesStartTime = System.currentTimeMillis()
-                    PMTilesLoader.loadPMTiles(context, map)
+                    PMTilesLoader.loadPMTiles(context, map, fontSize)
                     val pmtilesElapsed = System.currentTimeMillis() - pmtilesStartTime
                     Log.d("[ChartPlotterMap]", "⏱️ [PMTiles 로드 호출] - ${pmtilesElapsed}ms")
 

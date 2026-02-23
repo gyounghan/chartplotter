@@ -1,5 +1,6 @@
 package com.marineplay.chartplotter.presentation.components.dialogs
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -17,7 +18,11 @@ fun SystemFontSizeDialog(
     onSizeChanged: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var size by remember { mutableStateOf(currentSize) }
+    val fontSizes = listOf(
+        Pair(12f, "작게"),
+        Pair(14f, "일반"),
+        Pair(18f, "크게")
+    )
     
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -32,44 +37,51 @@ fun SystemFontSizeDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "글자 크기 조정",
+                    text = "글자 크기 선택",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.Black
                 )
                 
                 Text(
-                    text = "크기: ${size.toInt()}sp",
-                    fontSize = 18.sp,
-                    color = Color.Black
+                    text = "원하는 크기를 선택하세요",
+                    fontSize = 14.sp,
+                    color = Color.Gray
                 )
                 
-                Slider(
-                    value = size,
-                    onValueChange = { size = it },
-                    valueRange = 10f..24f,
-                    steps = 13
-                )
+                fontSizes.forEach { (size, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onSizeChanged(size)
+                                onDismiss()
+                            }
+                            .padding(vertical = 12.dp, horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 16.sp,
+                            color = if (when (size) {
+                            12f -> currentSize <= 13f
+                            14f -> currentSize in 13f..15.5f
+                            else -> currentSize >= 15.5f
+                        }) Color(0xFF2196F3) else Color.Black
+                        )
+                        Text(
+                            text = "${size.toInt()}sp",
+                            fontSize = 14.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
                 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("취소")
-                    }
-                    Button(
-                        onClick = {
-                            onSizeChanged(size)
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
-                    ) {
-                        Text("저장", color = Color.White)
-                    }
+                    Text("취소")
                 }
             }
         }

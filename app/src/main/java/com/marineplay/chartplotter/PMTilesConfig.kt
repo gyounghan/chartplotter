@@ -411,7 +411,7 @@ object PMTilesManager {
                     "lights_yellow" to "lights_yellow",
                     "lights_green" to "lights_green",
                 ),
-                iconSize = 2f,
+                iconSize = 1.2f,
             ),
             PMTilesConfig(
                 fileName = "p_boylat.pmtiles",
@@ -424,7 +424,7 @@ object PMTilesManager {
                     "boylat_red" to "boylat_red",
                     "boylat_green" to "boylat_green",
                 ),
-                iconSize = 2f,
+                iconSize = 1.2f,
             ),
             PMTilesConfig(
                 fileName = "p_boyspp.pmtiles",
@@ -439,7 +439,7 @@ object PMTilesManager {
                     "boyspp_spherical" to "boyspp_spherical",
                     "boyspp_pillar" to "boyspp_pillar",
                 ),
-                iconSize = 2f,
+                iconSize = 1.2f,
             ),
             PMTilesConfig(
                 fileName = "p_bcnlat_6.pmtiles",

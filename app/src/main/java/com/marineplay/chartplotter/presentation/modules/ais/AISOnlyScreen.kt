@@ -14,7 +14,11 @@ import com.google.android.gms.location.*
 import com.marineplay.chartplotter.presentation.modules.ais.components.SideNavigation
 import com.marineplay.chartplotter.presentation.modules.ais.di.AISModule
 import com.marineplay.chartplotter.presentation.modules.ais.models.AISTab
-import com.marineplay.chartplotter.presentation.modules.ais.tabs.*
+import com.marineplay.chartplotter.presentation.modules.ais.tabs.EventsTab
+import com.marineplay.chartplotter.presentation.modules.ais.tabs.RiskTab
+import com.marineplay.chartplotter.presentation.modules.ais.tabs.SettingsTab
+import com.marineplay.chartplotter.presentation.modules.ais.tabs.VesselsTab
+import com.marineplay.chartplotter.presentation.modules.ais.tabs.WatchlistTab
 
 /**
  * AIS 전용 화면
@@ -92,6 +96,7 @@ fun AISOnlyScreen(
                 when (selectedTab) {
                     AISTab.RISK -> RiskTab(viewModel = viewModel)
                     AISTab.VESSELS -> VesselsTab(viewModel = viewModel)
+                    AISTab.WATCHLIST -> WatchlistTab(viewModel = viewModel)
                     AISTab.EVENTS -> EventsTab(viewModel = viewModel)
                     AISTab.SETTINGS -> SettingsTab()
                 }

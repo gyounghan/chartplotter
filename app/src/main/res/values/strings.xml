@@ -52,6 +52,11 @@
     <!-- AIS 메뉴 -->
     <string name="ais_toggle">AIS ON/OFF</string>
     <string name="ais_settings">AIS 설정</string>
+    <!-- AIS Foreground Service -->
+    <string name="ais_service_channel_name">AIS 수신</string>
+    <string name="ais_service_channel_desc">백그라운드 AIS 데이터 수신</string>
+    <string name="ais_service_title">AIS 수신 중</string>
+    <string name="ais_service_text">선박 정보를 수신하고 있습니다</string>
     <!-- 경로 메뉴 -->
     <string name="route_create">경로 생성</string>
     <string name="route_display">경로 표시</string>

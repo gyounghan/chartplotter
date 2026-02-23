@@ -77,8 +77,9 @@ object PMTilesLoader {
     /**
      * 통합 PMTiles 로딩 함수 (메인 진입점)
      * 외부 저장소 우선 → 없으면 내부 assets fallback
+     * @param fontSize 시스템 설정의 문자 크기 (sp, 기본 14) - 전자해도 텍스트 레이어 크기에 반영
      */
-    fun loadPMTiles(context: Context, map: MapLibreMap) {
+    fun loadPMTiles(context: Context, map: MapLibreMap, fontSize: Float = 14f) {
         val totalStartTime = System.currentTimeMillis()
         
         // 외부 디렉토리 구조 초기화 (없으면 생성)
@@ -95,7 +96,7 @@ object PMTilesLoader {
         
         if (source.isExternal) {
             Log.d("[PMTilesLoader]", "🌐 [외부 저장소] PMTiles 로드 시작: ${source.fileNames.size}개 파일")
-            loadFromExternal(context, map, source)
+            loadFromExternal(context, map, source, fontSize)
             val elapsed = System.currentTimeMillis() - totalStartTime
             Log.d("[PMTilesLoader]", "✅ [완료] 외부 PMTiles 로드 (총 ${elapsed}ms)")
             return
@@ -103,7 +104,7 @@ object PMTilesLoader {
         
         // 2. Fallback: 기존 assets 방식
         Log.d("[PMTilesLoader]", "📦 [내부 assets] PMTiles 로드 시작 (fallback)")
-        loadPMTilesFromAssets(context, map)
+        loadPMTilesFromAssets(context, map, fontSize)
         val elapsed = System.currentTimeMillis() - totalStartTime
         Log.d("[PMTilesLoader]", "✅ [완료] 내부 PMTiles 로드 (총 ${elapsed}ms)")
     }
@@ -111,7 +112,7 @@ object PMTilesLoader {
     /**
      * 외부 저장소에서 PMTiles를 로드하는 함수
      */
-    private fun loadFromExternal(context: Context, map: MapLibreMap, source: PMTilesManager.PMTilesSource) {
+    private fun loadFromExternal(context: Context, map: MapLibreMap, source: PMTilesManager.PMTilesSource, fontSize: Float = 14f) {
         try {
             // 설정 로드 (외부 JSON 우선 → 내부 하드코딩 fallback)
             val (allConfigs, isExternalConfig) = PMTilesManager.loadConfigs(context)
@@ -135,19 +136,19 @@ object PMTilesLoader {
             }
             
             // 외부 파일은 이미 접근 가능한 위치에 있으므로 복사 불필요, 직접 적용
-            applyPMTilesToMap(map, matchedConfigs, matchedFiles, context)
+            applyPMTilesToMap(map, matchedConfigs, matchedFiles, context, fontSize)
             
         } catch (e: Exception) {
             Log.e("[PMTilesLoader]", "❌ 외부 PMTiles 로드 실패: ${e.message}, assets fallback으로 전환")
             e.printStackTrace()
-            loadPMTilesFromAssets(context, map)
+            loadPMTilesFromAssets(context, map, fontSize)
         }
     }
     
     /**
      * PMTiles 파일을 자동으로 로드하고 MapLibre에 적용하는 함수 (내부 assets 전용)
      */
-    fun loadPMTilesFromAssets(context: Context, map: MapLibreMap) {
+    fun loadPMTilesFromAssets(context: Context, map: MapLibreMap, fontSize: Float = 14f) {
         val totalStartTime = System.currentTimeMillis()
         Log.d("[PMTilesLoader]", "🚀 [시작] loadPMTilesFromAssets")
         
@@ -217,7 +218,7 @@ object PMTilesLoader {
             
             // MapLibre에 PMTiles 적용
             val applyStartTime = System.currentTimeMillis()
-            applyPMTilesToMap(map, pmtilesConfigs, copiedFiles, context)
+            applyPMTilesToMap(map, pmtilesConfigs, copiedFiles, context, fontSize)
             val applyElapsed = System.currentTimeMillis() - applyStartTime
             Log.d("[PMTilesLoader]", "⏱️ [PMTiles 적용] - ${applyElapsed}ms")
             
@@ -237,8 +238,9 @@ object PMTilesLoader {
     
     /**
      * PMTiles를 MapLibre에 적용하는 함수
+     * @param fontSize 시스템 설정의 문자 크기 (sp) - 전자해도 텍스트 레이어에 반영
      */
-    private fun applyPMTilesToMap(map: MapLibreMap, configs: List<PMTilesConfig>, files: List<File>, context: Context) {
+    private fun applyPMTilesToMap(map: MapLibreMap, configs: List<PMTilesConfig>, files: List<File>, context: Context, fontSize: Float = 14f) {
         val applyStartTime = System.currentTimeMillis()
         Log.d("[PMTilesLoader]", "🎨 [시작] applyPMTilesToMap (${configs.size}개 설정)")
         
@@ -288,7 +290,7 @@ object PMTilesLoader {
                     when (config.layerType) {
                         LayerType.LINE -> addLineLayer(style, config)
                         LayerType.AREA -> addAreaLayer(style, config)
-                        LayerType.TEXT -> addTextLayer(style, config)
+                        LayerType.TEXT -> addTextLayer(style, config, fontSize)
                         LayerType.SYMBOL -> {
                             if (config.isDynamicSymbol) {
                                 addDynamicSymbolLayer(style, config, context, config.iconMapping)
@@ -437,22 +439,24 @@ object PMTilesLoader {
     
     /**
      * 심볼/텍스트 레이어를 추가하는 함수
+     * @param fontSize 시스템 설정의 문자 크기 (sp) - 14가 기본, 사용자 선택에 따라 12~20
      */
-    private fun addTextLayer(style: Style, config: PMTilesConfig) {
+    private fun addTextLayer(style: Style, config: PMTilesConfig, fontSize: Float = 14f) {
         if (!config.hasTextLayer) return
         val isDepth = config.sourceName.contains("depth", ignoreCase = true)
+
+        // 시스템 설정 문자 크기 반영: 기본 14sp 기준으로 스케일 (12~20 → 약 0.86~1.43)
+        val fontSizeScale = fontSize / 14f
+        val baseSize = 10f * fontSizeScale
+        val maxSize = 15f * fontSizeScale
 
         val symbolLayer = SymbolLayer("${config.sourceName}-labels", config.sourceName).apply {
             setSourceLayer(config.sourceLayer)
             minZoom = 7f
             maxZoom = 32f
             
-            // FONT 속성 기반 동적 텍스트 크기
+            // FONT 속성 기반 동적 텍스트 크기 + 시스템 설정 문자 크기 반영
             // FONT 형식: "24OB" (24 크기, 굵게), "110" (110 크기), "120B" (120 크기, 굵게)
-            // 기본 크기 110을 12sp로 가정하고 비례 계산
-            // toNumber()를 사용하여 문자열에서 숫자 부분만 추출 (예: "240B" -> 240)
-            val baseSize = 10f
-
             setProperties(
                 // 텍스트 필드 설정
                 PropertyFactory.textField(
@@ -463,7 +467,7 @@ object PMTilesLoader {
                     min(
                         max(
                            toNumber(get("FONT")), literal(baseSize)
-                    ), literal(15)
+                    ), literal(maxSize)
                     )
                     )),
                 PropertyFactory.textColor(

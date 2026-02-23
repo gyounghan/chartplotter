@@ -12,6 +12,7 @@ package com.marineplay.chartplotter.presentation.modules.ais.models
 enum class AISTab(val label: String) {
     RISK("위험"),
     VESSELS("선박"),
+    WATCHLIST("즐겨찾기"),
     EVENTS("이벤트"),
     SETTINGS("설정")
 }

@@ -7,6 +7,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +32,8 @@ fun VesselLocationDialog(
     vessel: AISVessel,
     currentLatitude: Double?,
     currentLongitude: Double?,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onToggleWatchlist: ((String) -> Unit)? = null
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -67,12 +70,28 @@ fun VesselLocationDialog(
                             color = AISTheme.textSecondary
                         )
                     }
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "닫기",
-                            tint = AISTheme.textPrimary
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (onToggleWatchlist != null) {
+                            IconButton(
+                                onClick = { onToggleWatchlist(vessel.id) }
+                            ) {
+                                Icon(
+                                    imageVector = if (vessel.isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                    contentDescription = if (vessel.isWatchlisted) "즐겨찾기 해제" else "즐겨찾기 추가",
+                                    tint = if (vessel.isWatchlisted) AISTheme.info else AISTheme.textSecondary
+                                )
+                            }
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "닫기",
+                                tint = AISTheme.textPrimary
+                            )
+                        }
                     }
                 }
                 

@@ -1727,6 +1727,7 @@ fun ChartOnlyScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
+            fontSize = settingsViewModel.systemSettings.fontSize,
             isDialogShown = dialogUiState.showDialog ||
                     dialogUiState.showPointManageDialog ||
                     dialogUiState.showEditDialog ||
@@ -2081,11 +2082,12 @@ fun ChartOnlyScreen(
                             // 클릭된 위치에서 포인트 레이어의 피처들을 쿼리
                             val screenPoint = map.projection.toScreenLocation(latLng)
 
-                            // AIS 클릭 감지 (AIS 점, 삼각형, 라벨)
+                            // AIS 클릭 감지 (일반/즐겨찾기 삼각형, 원, 라벨 모두 포함)
                             val aisFeatures = map.queryRenderedFeatures(
                                 android.graphics.PointF(screenPoint.x, screenPoint.y),
                                 "ais-vessels-circle",
                                 "ais-vessels-triangle",
+                                "ais-vessels-watchlist-triangle",
                                 "ais-vessels-label"
                             )
                             if (aisFeatures.isNotEmpty()) {
@@ -2587,7 +2589,10 @@ fun ChartOnlyScreen(
         )
 
         // 오버레이 (GPS 정보, 커서 정보)
-        MapOverlays(viewModel = viewModel)
+        MapOverlays(
+            viewModel = viewModel,
+            fontSize = settingsViewModel.systemSettings.fontSize
+        )
 
         // 지도 컨트롤 버튼들
         MapControls(
@@ -2804,11 +2809,13 @@ fun ChartOnlyScreen(
 
         // 좌측 상단/하단 오버레이는 MapOverlays로 이동됨
         
-        // AIS 선박 정보 다이얼로그
-        selectedAISVessel?.let { vessel ->
+        // AIS 선박 정보 다이얼로그 (aisVessels에서 최신 데이터 사용 - 즐겨찾기 토글 시 즉시 반영)
+        selectedAISVessel?.let { selected ->
+            val displayVessel = aisVessels.find { it.mmsi == selected.mmsi } ?: selected
             AISVesselDialog(
-                vessel = vessel,
-                onDismiss = { selectedAISVessel = null }
+                vessel = displayVessel,
+                onDismiss = { selectedAISVessel = null },
+                onToggleWatchlist = { aisViewModel.toggleWatchlist(it) }
             )
         }
         }

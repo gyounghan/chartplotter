@@ -17,11 +17,21 @@ import com.marineplay.chartplotter.presentation.viewmodel.MainViewModel
 
 /**
  * 지도 오버레이 컴포넌트 (GPS 정보, 커서 정보 등)
+ * @param fontSize 시스템 설정 문자 크기 (sp) - 14가 기본
  */
 @Composable
-fun MapOverlays(viewModel: MainViewModel) {
+fun MapOverlays(
+    viewModel: MainViewModel,
+    fontSize: Float = 14f
+) {
     val mapUiState = viewModel.mapUiState
     val gpsUiState = viewModel.gpsUiState
+    
+    // 기본 14sp 대비 스케일 (라벨 12sp, 값 18sp 등)
+    val labelSize = (12f * fontSize / 14f).sp
+    val valueSize = (18f * fontSize / 14f).sp
+    val smallSize = (11f * fontSize / 14f).sp
+    val mediumSize = (16f * fontSize / 14f).sp
 
     // 좌측 상단: 현재 GPS, COG, 화면표시 모드
     Box(
@@ -42,12 +52,12 @@ fun MapOverlays(viewModel: MainViewModel) {
                     Text(
                         text = stringResource(R.string.latitude),
                         color = Color.Black,
-                        fontSize = 12.sp
+                        fontSize = labelSize
                     )
                     Text(
                         text = String.format("%.6f", gpsUiState.latitude),
                         color = Color.Black,
-                        fontSize = 18.sp,
+                        fontSize = valueSize,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -58,12 +68,12 @@ fun MapOverlays(viewModel: MainViewModel) {
                     Text(
                         text = stringResource(R.string.longitude),
                         color = Color.Black,
-                        fontSize = 12.sp
+                        fontSize = labelSize
                     )
                     Text(
                         text = String.format("%.6f", gpsUiState.longitude),
                         color = Color.Black,
-                        fontSize = 18.sp,
+                        fontSize = valueSize,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -71,7 +81,7 @@ fun MapOverlays(viewModel: MainViewModel) {
                 Text(
                     text = stringResource(R.string.gps_no_signal),
                     color = Color.Black,
-                    fontSize = 16.sp,
+                    fontSize = mediumSize,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -83,12 +93,12 @@ fun MapOverlays(viewModel: MainViewModel) {
                 Text(
                     text = stringResource(R.string.cog),
                     color = Color.Black,
-                    fontSize = 12.sp
+                    fontSize = labelSize
                 )
                 Text(
                     text = "${String.format("%.1f", gpsUiState.cog)}°",
                     color = Color.Black,
-                    fontSize = 18.sp,
+                    fontSize = valueSize,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -106,12 +116,12 @@ fun MapOverlays(viewModel: MainViewModel) {
                 Text(
                     text = stringResource(R.string.mode),
                     color = Color.Black,
-                    fontSize = 12.sp
+                    fontSize = labelSize
                 )
                 Text(
                     text = modeDisplayText,
                     color = Color.Black,
-                    fontSize = 18.sp,
+                    fontSize = valueSize,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -139,18 +149,18 @@ fun MapOverlays(viewModel: MainViewModel) {
                     Text(
                         text = stringResource(R.string.cursor_gps),
                         color = Color.White,
-                        fontSize = 12.sp,
+                        fontSize = labelSize,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = "${stringResource(R.string.latitude)}: ${String.format("%.6f", mapUiState.cursorLatLng!!.latitude)}",
                         color = Color.White,
-                        fontSize = 11.sp
+                        fontSize = smallSize
                     )
                     Text(
                         text = "${stringResource(R.string.longitude)}: ${String.format("%.6f", mapUiState.cursorLatLng!!.longitude)}",
                         color = Color.White,
-                        fontSize = 11.sp
+                        fontSize = smallSize
                     )
                 }
             }

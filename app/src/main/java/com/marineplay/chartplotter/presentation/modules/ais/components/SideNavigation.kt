@@ -6,7 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.DirectionsBoat
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +38,7 @@ fun SideNavigation(
     val tabs = listOf(
         TabItem(AISTab.RISK, "위험", Icons.Default.Warning),
         TabItem(AISTab.VESSELS, "선박", Icons.Default.DirectionsBoat),
+        TabItem(AISTab.WATCHLIST, "즐겨찾기", Icons.Default.Star),
         TabItem(AISTab.EVENTS, "이벤트", Icons.Default.Event),
         TabItem(AISTab.SETTINGS, "설정", Icons.Default.Settings)
     )
