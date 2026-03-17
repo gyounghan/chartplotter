@@ -1,4 +1,4 @@
-package com.marineplay.chartplotter
+package com.kumhomarine.chartplotter
 
 import org.junit.Test
 

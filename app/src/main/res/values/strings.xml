@@ -4,11 +4,14 @@
     <!-- 메뉴 -->
     <string name="menu">메뉴</string>
     <string name="menu_point">포인트</string>
+    <string name="menu_marker">마커</string>
+    <string name="point_list">포인트 리스트</string>
     <string name="menu_navigation">항해</string>
     <string name="menu_track">항적</string>
     <string name="menu_ais">AIS</string>
     <string name="menu_display">화면표시 방법설정</string>
     <string name="menu_route">경로</string>
+    <string name="menu_settings">설정</string>
     <string name="menu_close">메뉴 닫기</string>
     <string name="menu_back">뒤로가기</string>
     <!-- 시스템 설정 -->
@@ -32,26 +35,42 @@
     <string name="mode_course_up">코스업</string>
     <string name="cursor_position">커서 위치</string>
     <string name="navigation_in_progress">항해 중</string>
-    <!-- 포인트 메뉴 -->
+    <!-- 마커/포인트 메뉴 -->
+    <string name="marker_create">마커 생성</string>
     <string name="point_create">포인트 생성</string>
     <string name="point_delete">포인트 삭제</string>
     <string name="point_edit">포인트 변경</string>
+    <string name="point_edit_select">편집할 포인트 선택</string>
+    <string name="point_edit_empty">편집할 포인트가 없습니다.</string>
     <string name="coords_unavailable">좌표를 가져올 수 없습니다.</string>
     <string name="points_count">포인트 %d개</string>
     <!-- 항해 메뉴 -->
+    <string name="nav_section_start">항해 시작</string>
+    <string name="nav_section_ongoing">진행 중</string>
     <string name="nav_start">항해 시작</string>
-    <string name="nav_start_from_route">경로로 항해 시작</string>
+    <string name="nav_start_from_point">포인트로 항해 시작</string>
+    <string name="nav_start_from_marker">마커 항해 시작</string>
+    <string name="nav_start_from_route">경로 항해 시작</string>
     <string name="no_routes_saved">저장된 경로가 없습니다.</string>
+    <string name="nav_dest_select">목적지 선택</string>
+    <string name="nav_dest_select_desc">항해할 목적지를 선택하세요</string>
     <string name="dest_change">목적지 변경</string>
     <string name="waypoint_manage">경유지 관리</string>
     <string name="nav_stop">항해 중지</string>
     <!-- 항적 메뉴 -->
-    <string name="track_list">항적 목록</string>
+    <string name="track_create">항적 생성</string>
+    <string name="track_list">항적 리스트</string>
+    <string name="no_tracks_saved">저장된 항적이 없습니다.</string>
     <string name="track_stop_recording">항적 기록 중지</string>
     <string name="recording">기록 중: %s</string>
     <!-- AIS 메뉴 -->
     <string name="ais_toggle">AIS ON/OFF</string>
     <string name="ais_settings">AIS 설정</string>
+    <!-- 항적 백그라운드 기록 Service -->
+    <string name="track_recording_service_channel_name">항적 기록</string>
+    <string name="track_recording_service_channel_desc">백그라운드에서 항적 기록 유지</string>
+    <string name="track_recording_service_title">항적 기록 중</string>
+    <string name="track_recording_service_text">항적을 백그라운드에서 기록하고 있습니다</string>
     <!-- AIS Foreground Service -->
     <string name="ais_service_channel_name">AIS 수신</string>
     <string name="ais_service_channel_desc">백그라운드 AIS 데이터 수신</string>
