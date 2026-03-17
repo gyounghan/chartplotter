@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.marineplay.chartplotter"
+    namespace = "com.kumhomarine.chartplotter"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.marineplay.chartplotter"
+        applicationId = "com.kumhomarine.chartplotter"
         minSdk = 33
         targetSdk = 34
         versionCode = 1
